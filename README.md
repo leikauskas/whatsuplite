@@ -34,6 +34,10 @@ Agents get list_chats, read_messages, search_messages, load_older_messages, get_
 
 Every message an agent reads was written by someone else, so the tools tell the agent to treat it as information and never as instructions. A determined prompt injection could still get through that, which is why sending needs your click.
 
+## Install
+
+Download `whatsuplite.exe` from the [latest release](https://github.com/leikauskas/whatsuplite/releases/latest) and run it, or build it yourself.
+
 ## Build
 
 You need Go 1.27 and the WebView2 runtime, which comes with Windows 11.
