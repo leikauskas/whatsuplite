@@ -1,0 +1,868 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WhatsUpLite</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --line: #e4e6ea; --text: #16181d; --muted: #6b7280;
+  --accent: #0f8a5f; --accent-soft: #e3f4ec; --mine: #d9f5e6; --theirs: #ffffff; --hover: #f0f2f5;
+  --sel: #e7eaee; --badge: #0f8a5f; --badge-muted: #9aa1ab; --quote: rgba(0,0,0,.05); --tick: #3b82f6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark; /* dark audio/video controls and scrollbars */
+    --bg: #0f1215; --panel: #171b1f; --line: #262b31; --text: #e8eaed; --muted: #8b939e;
+    --accent: #2fbf86; --accent-soft: #15322a; --mine: #164a37; --theirs: #1f2429; --hover: #1d2227;
+    --sel: #242a30; --badge: #2fbf86; --badge-muted: #59616b; --quote: rgba(255,255,255,.06); --tick: #60a5fa;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+#app { display: grid; grid-template-columns: 340px 1fr; height: 100%; }
+#side { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+#search { margin: 12px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; outline: none; }
+#search:focus { border-color: var(--accent); }
+#tabs { display: flex; gap: 6px; padding: 0 12px 8px; }
+#tabs button { padding: 3px 10px; border-radius: 999px; color: var(--muted); font-size: 13px; }
+#tabs button.on { background: var(--accent-soft); color: var(--accent); }
+#list { overflow-y: auto; flex: 1; }
+.chat { display: grid; grid-template-columns: 44px 1fr auto; gap: 0 10px; padding: 9px 12px; cursor: pointer; align-items: center; }
+.chat:hover { background: var(--hover); }
+.chat.sel { background: var(--sel); }
+.av { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 600; font-size: 16px; grid-row: span 2; position: relative; overflow: hidden; }
+.av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cname { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctime { font-size: 12px; color: var(--muted); text-align: right; }
+.clast { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat.unread .cname { font-weight: 700; }
+.chat.unread .ctime { color: var(--accent); font-weight: 600; }
+.chat.unread .clast { color: var(--text); font-weight: 500; }
+.chat.unread.muted-chat .ctime { color: var(--muted); }
+.unreadbar { align-self: center; margin: 10px 0 6px; padding: 4px 14px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 600; }
+.cmeta { text-align: right; }
+.badge { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--badge); color: #fff; font-size: 12px; font-weight: 600; text-align: center; }
+.badge.muted { background: var(--badge-muted); }
+.pin { font-size: 11px; color: var(--muted); }
+.comm { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center; padding: 12px 12px 6px; cursor: pointer; border-top: 1px solid var(--line); }
+.comm:first-child { border-top: 0; }
+.comm:hover { background: var(--hover); }
+.comm .av { grid-row: auto; }
+.av.sq { border-radius: 12px; }
+.ccount { display: flex; align-items: center; gap: 8px; }
+.caret { color: var(--muted); width: 12px; text-align: center; }
+.chat.sub { grid-template-columns: 36px 1fr auto; padding: 7px 12px 7px 32px; }
+.chat.sub .av { width: 36px; height: 36px; font-size: 13px; }
+.none { padding: 24px; text-align: center; color: var(--muted); }
+.sect { padding: 14px 12px 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; border-top: 1px solid var(--line); }
+.hit { padding: 8px 12px; cursor: pointer; }
+.hit:hover { background: var(--hover); }
+.hit .hn { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13.5px; }
+.hit .hs { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit mark, .b mark { background: rgba(47,191,134,.35); color: inherit; border-radius: 3px; padding: 0 1px; }
+.row.flash .b { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color 1.5s; }
+#tabs { gap: 2px; overflow-x: auto; scrollbar-width: none; }
+#tabs::-webkit-scrollbar { display: none; }
+#tabs button { padding: 3px 8px; white-space: nowrap; flex: none; }
+#main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#head { height: 60px; display: flex; align-items: center; gap: 12px; padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--line); }
+#head .av { width: 38px; height: 38px; font-size: 14px; }
+#head .title { font-weight: 600; font-size: 15px; }
+#msgs { flex: 1; overflow-y: auto; padding: 14px 6% 8px; display: flex; flex-direction: column; }
+.day { align-self: center; margin: 12px 0 6px; padding: 3px 10px; border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 12px; border: 1px solid var(--line); }
+.row { display: flex; margin: 1px 0; position: relative; }
+.row.me { justify-content: flex-end; }
+.row.gap { margin-top: 8px; }
+.b { max-width: min(560px, 75%); padding: 6px 9px 4px; border-radius: 10px; background: var(--theirs); box-shadow: 0 1px 0 rgba(0,0,0,.06); position: relative; overflow-wrap: anywhere; }
+.row.me .b { background: var(--mine); }
+.b .who { font-size: 12.5px; font-weight: 600; margin-bottom: 1px; }
+.b .txt { white-space: pre-wrap; }
+.b .meta { float: right; margin: 6px 0 -4px 10px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.b .meta .tick.read { color: var(--tick); }
+.b .del { font-style: italic; color: var(--muted); }
+.b .q { border-left: 3px solid var(--accent); background: var(--quote); border-radius: 5px; padding: 4px 8px; margin-bottom: 4px; font-size: 13px; color: var(--muted); max-height: 3.2em; overflow: hidden; cursor: pointer; }
+.b img.media, .b video.media { display: block; max-width: 100%; border-radius: 6px; margin: 2px 0 4px; background: var(--quote) center/cover no-repeat; cursor: pointer; }
+.b img.sticker { width: 140px; height: 140px; object-fit: contain; display: block; }
+.b audio { display: block; width: 280px; max-width: 100%; margin: 2px 0; }
+.doc { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; background: var(--quote); cursor: pointer; margin: 2px 0 4px; }
+.doc .ic { font-size: 22px; }
+.reacts { position: absolute; bottom: -12px; right: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; font-size: 12px; white-space: nowrap; }
+.row.has-r { margin-bottom: 14px; }
+.tools { position: absolute; top: 2px; display: none; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 2px; z-index: 2; }
+.row:not(.me) .tools { left: calc(min(560px, 75%) + 6px); }
+.row.me .tools { right: calc(min(560px, 75%) + 6px); }
+.row:hover .tools { display: flex; }
+.tools button { padding: 2px 5px; border-radius: 5px; font-size: 13px; }
+.tools button:hover { background: var(--hover); }
+#approvals { position: fixed; right: 16px; bottom: 84px; display: flex; flex-direction: column; gap: 10px; z-index: 40; width: 380px; max-width: calc(100vw - 32px); }
+.appr { background: var(--panel); border: 2px solid var(--accent); border-radius: 12px; box-shadow: 0 10px 34px rgba(0,0,0,.3); padding: 12px 14px; }
+.appr .ah { font-size: 13px; color: var(--muted); margin-bottom: 6px; display: flex; justify-content: space-between; gap: 8px; }
+.appr .ah b { color: var(--text); }
+.appr .ah button { color: var(--accent); font-size: 13px; }
+.appr .q { border-left: 3px solid var(--accent); background: var(--quote); border-radius: 5px; padding: 4px 8px; margin-bottom: 6px; font-size: 13px; color: var(--muted); max-height: 3em; overflow: hidden; }
+.appr textarea { width: 100%; min-height: 70px; max-height: 220px; resize: vertical; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; outline: none; }
+.appr textarea:focus { border-color: var(--accent); }
+.appr .ab { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.appr .ab button { padding: 6px 14px; border-radius: 8px; }
+.appr .send { background: var(--accent); color: #fff; }
+.appr .discard { background: var(--hover); }
+.appr .err { color: #e5484d; font-size: 13px; margin-top: 6px; }
+.appr .att { margin-bottom: 6px; }
+.appr .att img { display: block; max-width: 100%; max-height: 220px; border-radius: 8px; }
+.appr .afile { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font-size: 13px; text-align: left; }
+.appr .afile b, .appr .afile span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a long path loses its start, not the folder the file sits in */
+.appr .afile span { color: var(--muted); direction: rtl; margin-top: 2px; }
+.appr .att + textarea { min-height: 44px; }
+#picker { position: fixed; width: 330px; max-height: 380px; display: none; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.25); z-index: 30; overflow: hidden; }
+#picker.on { display: flex; }
+#pickq { margin: 10px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; outline: none; }
+#pickq:focus { border-color: var(--accent); }
+#picker .rm { margin: 0 10px 6px; padding: 5px; border-radius: 6px; background: var(--hover); font-size: 13px; }
+#pickgrid { overflow-y: auto; padding: 0 8px 10px; }
+#picker .ph { font-size: 12px; color: var(--muted); margin: 8px 4px 4px; }
+#picker .pg { display: grid; grid-template-columns: repeat(8, 1fr); }
+#picker .pg button { font-size: 21px; padding: 4px 0; border-radius: 6px; }
+#picker .pg button:hover { background: var(--hover); }
+a { color: var(--accent); }
+.mention { color: var(--accent); font-weight: 600; cursor: pointer; }
+.mention:hover { text-decoration: underline; }
+#person { position: fixed; width: 240px; display: none; flex-direction: column; align-items: center; gap: 4px; padding: 18px 16px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.25); z-index: 30; text-align: center; }
+#person.on { display: flex; }
+#person .av { width: 72px; height: 72px; font-size: 26px; grid-row: auto; margin-bottom: 6px; }
+#person .nm { font-size: 15px; font-weight: 600; }
+#person .ph { color: var(--muted); font-size: 13px; }
+#person button { margin-top: 10px; background: var(--accent); color: #fff; padding: 7px 18px; border-radius: 8px; }
+#compose { position: relative; }
+#mentions { position: absolute; left: 12px; bottom: 100%; margin-bottom: 6px; width: 300px; max-height: 260px; overflow-y: auto; display: none; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.2); z-index: 6; }
+#mentions.on { display: block; }
+#mentions button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border-radius: 8px; text-align: left; }
+#mentions button.sel { background: var(--hover); }
+#mentions .av { width: 30px; height: 30px; font-size: 12px; grid-row: auto; flex: none; }
+#compose { background: var(--panel); border-top: 1px solid var(--line); padding: 8px 12px; }
+#replybar { display: none; align-items: center; gap: 8px; padding: 4px 8px 8px; font-size: 13px; color: var(--muted); }
+#replybar.on { display: flex; }
+#replybar .rq { flex: 1; border-left: 3px solid var(--accent); padding-left: 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#composer { display: flex; align-items: flex-end; gap: 8px; }
+#input { flex: 1; resize: none; max-height: 160px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; outline: none; }
+#input:focus { border-color: var(--accent); }
+.iconbtn { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; color: var(--muted); }
+.iconbtn:hover { background: var(--hover); }
+#send { background: var(--accent); color: #fff; }
+#empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
+#banner { display: none; padding: 6px 12px; font-size: 13px; background: #f59e0b; color: #111; text-align: center; }
+#banner.on { display: block; }
+#overlay { position: fixed; inset: 0; background: var(--bg); display: none; place-items: center; z-index: 10; }
+#overlay.on { display: grid; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px 32px; text-align: center; max-width: 420px; }
+.card img { width: 280px; height: 280px; image-rendering: pixelated; background: #fff; padding: 10px; border-radius: 8px; }
+.card .big { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+.card .sub { color: var(--muted); margin-bottom: 16px; }
+.card button.primary { background: var(--accent); color: #fff; padding: 8px 18px; border-radius: 8px; margin-top: 10px; }
+#lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; place-items: center; z-index: 20; cursor: zoom-out; }
+#lightbox.on { display: grid; }
+#lightbox img { max-width: 94vw; max-height: 94vh; }
+#drop { position: absolute; inset: 0; border: 3px dashed var(--accent); background: rgba(15,138,95,.08); display: none; place-items: center; font-size: 18px; color: var(--accent); z-index: 5; pointer-events: none; }
+#drop.on { display: grid; }
+#main { position: relative; }
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+</style>
+</head>
+<body>
+<div id="banner"></div>
+<div id="app">
+  <aside id="side">
+    <input id="search" placeholder="Search" autocomplete="off">
+    <div id="tabs"><button data-f="all" class="on">All</button><button data-f="unread">Unread</button><button data-f="groups">Groups</button><button data-f="communities">Communities</button><button data-f="archived">Archived</button></div>
+    <div id="list"></div>
+  </aside>
+  <main id="main">
+    <div id="empty">Pick a chat</div>
+    <header id="head" hidden><div class="av"></div><div class="title"></div></header>
+    <div id="msgs" hidden></div>
+    <footer id="compose" hidden>
+      <div id="replybar"><div class="rq"></div><button id="replyx" title="Cancel">✕</button></div>
+      <div id="composer">
+        <button class="iconbtn" id="attach" title="Attach"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7L14 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15.5 7.6"/></svg></button>
+        <textarea id="input" rows="1" placeholder="Message"></textarea>
+        <button class="iconbtn" id="send" title="Send">➤</button>
+      </div>
+      <input type="file" id="file" hidden multiple>
+    </footer>
+    <div id="drop">Drop to send</div>
+  </main>
+</div>
+<div id="overlay"><div class="card" id="card"></div></div>
+<div id="lightbox"><img alt=""></div>
+<div id="approvals"></div>
+<script src="/emoji.js"></script>
+<script>
+const T = new URLSearchParams(location.search).get('t');
+const $ = s => document.querySelector(s);
+const api = (path, opts = {}) => fetch(path, { ...opts, headers: { ...(opts.headers || {}), 'X-Token': T } })
+  .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.status); return j; });
+const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+let chats = [], current = null, msgs = [], byId = new Map(), done = false, loading = false, reply = null, filter = 'all', focused = document.hasFocus();
+
+const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const palette = ['#e17055', '#00a884', '#6c5ce7', '#0984e3', '#d63031', '#e84393', '#00b894', '#fd9644', '#8854d0', '#20bf6b', '#2d98da', '#eb3b5a'];
+const colorFor = s => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return palette[Math.abs(h) % palette.length]; };
+const initials = n => { const w = n.replace(/^[~+]/, '').trim().split(/\s+/).filter(Boolean); return w.length ? (w[0][0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase() : '#'; };
+const now = () => Date.now() / 1000;
+const avatarHTML = c => `${esc(initials(c.name))}<img loading="lazy" alt="" src="/avatar?jid=${encodeURIComponent(c.jid)}&t=${T}" onerror="this.remove()">`;
+const isMuted = c => c.muted_until > now();
+
+function fmtListTime(ts) {
+  const d = new Date(ts * 1000), t = new Date();
+  if (d.toDateString() === t.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const y = new Date(t); y.setDate(t.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  if (t - d < 6 * 864e5) return d.toLocaleDateString([], { weekday: 'long' });
+  return d.toLocaleDateString();
+}
+const fmtTime = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function fmtDay(ts) {
+  const d = new Date(ts * 1000), t = new Date();
+  if (d.toDateString() === t.toDateString()) return 'Today';
+  const y = new Date(t); y.setDate(t.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: d.getFullYear() === t.getFullYear() ? undefined : 'numeric' });
+}
+
+function rich(text, mentions) {
+  let s = esc(text);
+  if (mentions) s = s.replace(/@(\d+)/g, (t, n) => mentions[n] ? `<span class="mention" data-u="${n}">@${esc(mentions[n].name)}</span>` : t);
+  s = s.replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)\]'"]/g, u => `<a href="${u}">${u}</a>`);
+  s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<b>$2</b>');
+  s = s.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<i>$2</i>');
+  s = s.replace(/(^|[\s(])~([^~\n]+)~(?=[\s).,!?]|$)/g, '$1<s>$2</s>');
+  s = s.replace(/```([\s\S]+?)```/g, '<code>$1</code>');
+  return s;
+}
+
+// ---- chat list
+async function loadChats() {
+  chats = await api('/api/chats');
+  renderChats();
+  updateTitle();
+}
+let chatsTimer = 0;
+const refreshChats = () => { clearTimeout(chatsTimer); chatsTimer = setTimeout(loadChats, 250); };
+
+const matches = (c, q) => !q || c.name.toLowerCase().includes(q) || (c.last_text || '').toLowerCase().includes(q) || c.jid.includes(q);
+const chatRow = (c, extra = '', sub = '') => `
+    <div class="chat${extra}${c.jid === current?.jid ? ' sel' : ''}${c.unread ? ' unread' : ''}${isMuted(c) ? ' muted-chat' : ''}" data-jid="${esc(c.jid)}">
+      <div class="av" style="background:${colorFor(c.jid)}">${avatarHTML(c)}</div>
+      <div class="cname">${esc(c.name)}</div>
+      <div class="ctime">${c.last_ts ? fmtListTime(c.last_ts) : ''}</div>
+      <div class="clast">${esc(c.last_text || sub)}</div>
+      <div class="cmeta">${c.unread ? `<span class="badge${isMuted(c) ? ' muted' : ''}">${c.unread}</span>` : c.pinned ? '<span class="pin" title="Pinned"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M16 3l5 5-3 1-4 4 1 5-2 2-4-4-5 5-1-1 5-5-4-4 2-2 5 1 4-4z"/></svg></span>' : ''}</div>
+    </div>`;
+
+function renderChats() {
+  const q = $('#search').value.trim().toLowerCase();
+  if (filter === 'communities') return renderCommunities(q);
+  const list = chats.filter(c => {
+    if (!c.last_ts) return false;
+    if (filter === 'archived') { if (!c.archived) return false; } else if (c.archived) return false;
+    if (filter === 'unread' && !c.unread) return false;
+    if (filter === 'groups' && !c.group) return false;
+    return matches(c, q);
+  });
+  let html = list.map(c => chatRow(c)).join('');
+  if (q.length >= 2 && msgHits.q === q) {
+    const name = j => chats.find(c => c.jid === j)?.name || j;
+    html += `<div class="sect">Messages</div>` + (msgHits.hits.length ? msgHits.hits.map(m => `
+      <div class="hit" data-chat="${esc(m.chat)}" data-id="${esc(m.id)}">
+        <div class="hn"><span>${esc(name(m.chat).replace(/^~/, ''))}</span><span class="ctime">${fmtListTime(m.ts)}</span></div>
+        <div class="hs">${m.from_me ? 'You: ' : m.sender_name ? esc(m.sender_name.replace(/^~/, '')) + ': ' : ''}${snippet(m.text || m.file_name || '', q)}</div>
+      </div>`).join('') : '<div class="none">No messages found</div>');
+  }
+  $('#list').innerHTML = html;
+}
+
+let collapsed = new Set();
+try { collapsed = new Set(JSON.parse(localStorage.getItem('whatsuplite.collapsed') || '[]')); } catch {}
+
+function renderCommunities(q) {
+  const byJid = new Map(chats.map(c => [c.jid, c]));
+  const subsOf = new Map();
+  for (const c of chats) if (c.parent) (subsOf.get(c.parent) || subsOf.set(c.parent, []).get(c.parent)).push(c);
+  const comms = [...subsOf].map(([jid, subs]) => {
+    const name = byJid.get(jid)?.name || 'Community';
+    subs.sort((a, b) => (b.default_sub - a.default_sub) || (b.last_ts - a.last_ts));
+    const hit = !q || name.toLowerCase().includes(q);
+    return { jid, name, subs: hit ? subs : subs.filter(s => matches(s, q)),
+      last: Math.max(...subs.map(s => s.last_ts)), unread: subs.reduce((n, s) => n + (isMuted(s) ? 0 : s.unread), 0) };
+  }).filter(c => c.subs.length).sort((a, b) => b.last - a.last);
+  $('#list').innerHTML = comms.length ? comms.map(c => {
+    const open = q || !collapsed.has(c.jid);
+    return `<div class="comm" data-comm="${esc(c.jid)}">
+        <div class="av sq" style="background:${colorFor(c.jid)}">${avatarHTML(c)}</div>
+        <div class="cname">${esc(c.name)}</div>
+        <div class="ccount">${c.unread ? `<span class="badge">${c.unread}</span>` : ''}<span class="caret">${open ? '▾' : '▸'}</span></div>
+      </div>` + (open ? c.subs.map(s => chatRow(s, ' sub', s.default_sub ? 'Announcements' : '')).join('') : '');
+  }).join('') : '<div class="none">No communities</div>';
+}
+
+function updateTitle() {
+  const n = chats.filter(c => c.unread && !isMuted(c) && !c.archived).length;
+  post('/api/title', { title: n ? `(${n}) WhatsUpLite` : 'WhatsUpLite', unread: n }).catch(() => {});
+}
+
+$('#list').addEventListener('click', e => {
+  const comm = e.target.closest('.comm');
+  if (comm) {
+    const j = comm.dataset.comm;
+    collapsed.has(j) ? collapsed.delete(j) : collapsed.add(j);
+    try { localStorage.setItem('whatsuplite.collapsed', JSON.stringify([...collapsed])); } catch {}
+    return renderChats();
+  }
+  const el = e.target.closest('.chat'); if (el) openChat(el.dataset.jid);
+});
+// Message search runs alongside the chat filter once the query has two characters.
+let msgHits = { q: '', hits: [] }, searchTimer = 0;
+$('#search').addEventListener('input', () => {
+  renderChats();
+  clearTimeout(searchTimer);
+  const q = $('#search').value.trim().toLowerCase();
+  if (q.length < 2) return;
+  searchTimer = setTimeout(async () => {
+    const hits = await api(`/api/search?q=${encodeURIComponent(q)}&limit=40`).catch(() => []);
+    if ($('#search').value.trim().toLowerCase() === q) { msgHits = { q, hits }; renderChats(); }
+  }, 250);
+});
+
+function snippet(text, q) {
+  const i = text.toLowerCase().indexOf(q);
+  const start = Math.max(0, i - 30);
+  const part = (start > 0 ? '…' : '') + text.slice(start, i + q.length + 70);
+  const j = part.toLowerCase().indexOf(q);
+  return j < 0 ? esc(part) : esc(part.slice(0, j)) + '<mark>' + esc(part.slice(j, j + q.length)) + '</mark>' + esc(part.slice(j + q.length));
+}
+
+// jumpTo opens a chat and pages back until the message is loaded, then shows it.
+async function jumpTo(chat, id) {
+  await openChat(chat);
+  for (let i = 0; i < 40 && !byId.has(id) && !done; i++) await loadOlder();
+  const el = $('#msgs').querySelector(`[data-id="${CSS.escape(id)}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center' });
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1800);
+}
+$('#list').addEventListener('click', e => {
+  const h = e.target.closest('.hit');
+  if (h) jumpTo(h.dataset.chat, h.dataset.id);
+});
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  filter = b.dataset.f;
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
+  renderChats();
+});
+
+// ---- messages
+async function openChat(jid, name) {
+  const c = chats.find(x => x.jid === jid) || { jid, name: name || jid };
+  current = c; msgs = []; byId = new Map(); done = false; reply = null; renderReply();
+  $('#empty').hidden = true; $('#head').hidden = false; $('#msgs').hidden = false; $('#compose').hidden = false;
+  $('#head .av').style.background = colorFor(c.jid); $('#head .av').innerHTML = avatarHTML(c);
+  $('#head .title').textContent = c.name;
+  $('#msgs').innerHTML = '';
+  renderChats();
+  sendView();
+  const page = await api(`/api/messages?chat=${encodeURIComponent(jid)}`);
+  if (current?.jid !== jid) return;
+  msgs = page; done = page.length < 60; phoneState = '';
+  page.forEach(m => byId.set(m.id, m));
+  // Mark where the unread messages start, like WhatsApp's "N unread messages" line.
+  unreadFrom = null; unreadCount = c.unread || 0;
+  for (let i = msgs.length - 1, n = 0; i >= 0 && n < unreadCount; i--) {
+    if (!msgs[i].from_me && msgs[i].kind !== 'system') { n++; unreadFrom = msgs[i].id; }
+  }
+  renderMsgs(true);
+  const bar = $('#msgs .unreadbar');
+  if (bar) bar.scrollIntoView({ block: 'start' });
+  if (!page.length) askPhone();
+  if (c.unread) markRead();
+  $('#input').focus();
+}
+
+// WhatsUpLite only holds what WhatsApp synced; older messages come from the phone on request.
+let phoneState = '', phoneTimer = 0;
+function askPhone() {
+  if (!current || phoneState === 'loading') return;
+  const jid = current.jid;
+  phoneState = 'loading'; renderMsgs(!msgs.length);
+  post('/api/history', { chat: jid }).catch(() => { if (current?.jid === jid) { phoneState = 'offline'; renderMsgs(false); } });
+  clearTimeout(phoneTimer);
+  phoneTimer = setTimeout(() => { if (current?.jid === jid && phoneState === 'loading') { phoneState = 'none'; renderMsgs(false); } }, 25000);
+}
+async function gotHistory() {
+  clearTimeout(phoneTimer);
+  const jid = current.jid, had = msgs.length;
+  const page = await api(`/api/messages?chat=${encodeURIComponent(jid)}`
+    + (had ? `&before=${msgs[0].ts}&before_id=${encodeURIComponent(msgs[0].id)}` : '')).catch(() => []);
+  if (current?.jid !== jid) return;
+  phoneState = page.length ? '' : 'none';
+  done = page.length < 60;
+  page.forEach(m => byId.set(m.id, m));
+  msgs = page.concat(msgs);
+  const box = $('#msgs'), h = box.scrollHeight;
+  renderMsgs(!had);
+  if (had) box.scrollTop += box.scrollHeight - h;
+}
+
+function markRead() {
+  if (!current) return;
+  const c = chats.find(x => x.jid === current.jid);
+  if (c && c.unread) { c.unread = 0; renderChats(); updateTitle(); post('/api/read', { chat: current.jid }).catch(() => {}); }
+}
+
+async function loadOlder() {
+  if (loading || !msgs.length) return;
+  if (done) { if (!phoneState) askPhone(); return; }
+  loading = true;
+  const first = msgs[0], jid = current.jid;
+  const page = await api(`/api/messages?chat=${encodeURIComponent(jid)}&before=${first.ts}&before_id=${encodeURIComponent(first.id)}`).catch(() => []);
+  loading = false;
+  if (current?.jid !== jid) return;
+  if (page.length < 60) done = true;
+  page.forEach(m => byId.set(m.id, m));
+  msgs = page.concat(msgs);
+  const box = $('#msgs'), h = box.scrollHeight;
+  renderMsgs(false);
+  box.scrollTop += box.scrollHeight - h;
+}
+$('#msgs').addEventListener('scroll', () => { if ($('#msgs').scrollTop < 300) loadOlder(); });
+
+const mediaURL = m => `/media?chat=${encodeURIComponent(m.chat)}&id=${encodeURIComponent(m.id)}&t=${T}`;
+const thumbURL = m => m.thumb ? `data:image/jpeg;base64,${m.thumb}` : '';
+
+function sizeStyle(m, maxW = 330, maxH = 360) {
+  if (!m.w || !m.h) return `width:${maxW}px;height:${Math.round(maxW * .75)}px`;
+  const s = Math.min(1, maxW / m.w, maxH / m.h);
+  return `width:${Math.round(m.w * s)}px;height:${Math.round(m.h * s)}px`;
+}
+
+function bodyHTML(m) {
+  if (m.deleted) return `<div class="del">This message was deleted</div>`;
+  let h = '';
+  if (m.quote_id) h += `<div class="q" data-q="${esc(m.quote_id)}">${esc(m.quote_text || 'Message')}</div>`;
+  const bg = m.thumb ? `background-image:url(${thumbURL(m)});` : '';
+  switch (m.kind) {
+    case 'image': h += `<img class="media" loading="lazy" src="${mediaURL(m)}" style="${bg}${sizeStyle(m)}" data-full="1" alt="">`; break;
+    case 'gif': h += `<video class="media" src="${mediaURL(m)}" style="${sizeStyle(m)}" autoplay loop muted playsinline preload="none" poster="${thumbURL(m)}"></video>`; break;
+    case 'video': h += `<video class="media" src="${mediaURL(m)}" style="${sizeStyle(m)}" controls preload="none" poster="${thumbURL(m)}"></video>`; break;
+    case 'voice': case 'audio': h += `<audio controls preload="none" src="${mediaURL(m)}"></audio>`; break;
+    case 'sticker': h += `<img class="sticker" loading="lazy" src="${mediaURL(m)}" alt="">`; break;
+    case 'document': h += `<div class="doc" data-open="1"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><span>${esc(m.file_name || 'Document')}</span></div>`; break;
+    case 'location': {
+      const [ll, ...rest] = m.text.split(' ');
+      h += `<a href="https://www.google.com/maps?q=${esc(ll)}">Location: ${esc(rest.join(' ') || 'open map')}</a>`;
+      return h + metaHTML(m);
+    }
+    case 'contact': h += `<div>Contact: ${esc(m.text)}</div>`; return h + metaHTML(m);
+    case 'poll': {
+      const [q, ...opts] = m.text.split('\n');
+      h += `<div><b>Poll: ${esc(q)}</b></div><div class="txt">${esc(opts.join('\n'))}</div>`;
+      return h + metaHTML(m);
+    }
+  }
+  if (m.text) h += `<span class="txt">${rich(m.text, m.mentions)}</span>`;
+  return h + metaHTML(m);
+}
+
+function metaHTML(m) {
+  let t = (m.edited ? 'edited · ' : '') + fmtTime(m.ts);
+  if (m.from_me) t += ` <span class="tick${m.status >= 2 ? ' read' : ''}">${m.status >= 1 ? '✓✓' : '✓'}</span>`;
+  return `<span class="meta">${t}</span>`;
+}
+
+function rowEl(m, prev) {
+  if (m.kind === 'system') {
+    const s = document.createElement('div'); s.className = 'day'; s.dataset.id = m.id; s.textContent = m.text; return s;
+  }
+  const row = document.createElement('div');
+  row.className = 'row' + (m.from_me ? ' me' : '') + (!prev || prev.from_me !== m.from_me || prev.sender !== m.sender ? ' gap' : '') + (m.reactions?.length ? ' has-r' : '');
+  row.dataset.id = m.id;
+  const showWho = current?.group && !m.from_me && (!prev || prev.sender !== m.sender || prev.from_me);
+  const who = showWho ? `<div class="who" style="color:${colorFor(m.sender)}">${esc((m.sender_name || '').replace(/^~/, ''))}</div>` : '';
+  const reacts = m.reactions?.length ? `<div class="reacts">${m.reactions.map(r => esc(r.emoji) + (r.count > 1 ? r.count : '')).join(' ')}</div>` : '';
+  row.innerHTML = `<div class="b">${who}${bodyHTML(m)}${reacts}</div>
+    <div class="tools"><button data-a="reply" title="Reply">↩</button>${QUICK.map(e => `<button data-a="react" data-e="${e}">${e}</button>`).join('')}<button data-a="more" title="More reactions">＋</button></div>`;
+  return row;
+}
+
+let unreadFrom = null, unreadCount = 0;
+function renderMsgs(toBottom) {
+  const box = $('#msgs'), frag = document.createDocumentFragment();
+  let prev = null, lastDay = '';
+  const status = { loading: 'Loading from your phone…', none: msgs.length ? 'No older messages' : 'No messages', offline: 'Phone not reachable' }[phoneState];
+  if (status) { const s = document.createElement('div'); s.className = 'day'; s.textContent = status; frag.appendChild(s); }
+  for (const m of msgs) {
+    const day = new Date(m.ts * 1000).toDateString();
+    if (day !== lastDay) {
+      const d = document.createElement('div'); d.className = 'day'; d.textContent = fmtDay(m.ts); frag.appendChild(d);
+      lastDay = day; prev = null;
+    }
+    if (m.id === unreadFrom) {
+      const u = document.createElement('div'); u.className = 'unreadbar';
+      u.textContent = `${unreadCount} unread message${unreadCount === 1 ? '' : 's'}`; frag.appendChild(u); prev = null;
+    }
+    frag.appendChild(rowEl(m, prev)); prev = m.kind === 'system' ? null : m;
+  }
+  box.replaceChildren(frag);
+  if (toBottom) box.scrollTop = box.scrollHeight;
+}
+
+function upsertMsg(m) {
+  const box = $('#msgs');
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
+  if (byId.has(m.id)) {
+    const i = msgs.findIndex(x => x.id === m.id);
+    if (i >= 0) msgs[i] = m;
+    byId.set(m.id, m);
+    const el = box.querySelector(`.row[data-id="${CSS.escape(m.id)}"]`);
+    if (el) el.replaceWith(rowEl(m, msgs[i - 1] && new Date(msgs[i - 1].ts * 1000).toDateString() === new Date(m.ts * 1000).toDateString() ? msgs[i - 1] : null));
+    return;
+  }
+  byId.set(m.id, m);
+  msgs.push(m);
+  msgs.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1));
+  renderMsgs(false);
+  if (nearBottom || m.from_me) box.scrollTop = box.scrollHeight;
+}
+
+// Clicking a mention shows who it is, with a way to message them.
+const person = document.createElement('div');
+person.id = 'person';
+document.body.appendChild(person);
+function showPerson(p, anchor) {
+  const self = p.name === 'You';
+  person.innerHTML = `<div class="av" style="background:${colorFor(p.jid)}">${avatarHTML(p)}</div><div class="nm">${esc(p.name)}</div>` +
+    (p.phone && p.phone !== p.name ? `<div class="ph">${esc(p.phone)}</div>` : '') + (self ? '' : '<button>Message</button>');
+  const btn = person.querySelector('button');
+  if (btn) btn.onclick = () => { person.classList.remove('on'); openChat(p.jid, p.name); };
+  person.classList.add('on');
+  const r = anchor.getBoundingClientRect(), w = person.offsetWidth, h = person.offsetHeight;
+  person.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+  person.style.top = (r.bottom + h + 8 < innerHeight ? r.bottom + 6 : Math.max(8, r.top - h - 6)) + 'px';
+}
+document.addEventListener('mousedown', e => { if (person.classList.contains('on') && !person.contains(e.target) && !e.target.closest('.mention')) person.classList.remove('on'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') person.classList.remove('on'); });
+$('#msgs').addEventListener('scroll', () => person.classList.remove('on'));
+
+$('#msgs').addEventListener('click', e => {
+  const t = e.target;
+  const row = t.closest('.row'); const m = row && byId.get(row.dataset.id);
+  const mt = t.closest('.mention');
+  if (mt && m?.mentions?.[mt.dataset.u]) { showPerson(m.mentions[mt.dataset.u], mt); return; }
+  if (t.dataset.full) { $('#lightbox img').src = t.src; $('#lightbox').classList.add('on'); return; }
+  if (t.closest('[data-open]') && m) { post('/api/open', { chat: m.chat, id: m.id }).catch(err => alert('Could not open: ' + err.message)); return; }
+  const q = t.closest('[data-q]');
+  if (q) { const el = $('#msgs').querySelector(`.row[data-id="${CSS.escape(q.dataset.q)}"]`); if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+  const b = t.closest('.tools button');
+  if (b && m) {
+    if (b.dataset.a === 'reply') { reply = m; renderReply(); $('#input').focus(); }
+    if (b.dataset.a === 'react') react(m, b.dataset.e);
+    if (b.dataset.a === 'more') openPicker(m, b);
+  }
+});
+$('#lightbox').addEventListener('click', () => $('#lightbox').classList.remove('on'));
+
+// ---- reactions
+
+function react(m, emoji) {
+  const mine = m.reactions?.find(r => r.mine && r.emoji === emoji);
+  if (!mine && emoji) {
+    try { const r = [emoji, ...JSON.parse(localStorage.getItem('whatsuplite.recent') || '[]').filter(e => e !== emoji)].slice(0, 8); localStorage.setItem('whatsuplite.recent', JSON.stringify(r)); } catch {}
+  }
+  post('/api/react', { chat: m.chat, id: m.id, emoji: mine ? '' : emoji }).catch(err => alert(err.message));
+}
+
+const picker = document.createElement('div');
+picker.id = 'picker';
+document.body.appendChild(picker);
+let pickFor = null;
+
+function openPicker(m, anchor) {
+  pickFor = m;
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem('whatsuplite.recent') || '[]'); } catch {}
+  const mine = m.reactions?.find(r => r.mine);
+  picker.innerHTML = `<input id="pickq" placeholder="Search, or Win + . for any emoji" autocomplete="off">
+    ${mine ? `<button class="rm" data-e="">Remove ${esc(mine.emoji)}</button>` : ''}
+    <div id="pickgrid"></div>`;
+  const draw = q => {
+    q = q.trim().toLowerCase();
+    const sections = q ? [['Results', EMOJI.flatMap(([, l]) => l).filter(([e, k]) => k.includes(q))]]
+      : [...(recent.length ? [['Recent', recent.map(e => [e, ''])]] : []), ...EMOJI];
+    $('#pickgrid').innerHTML = sections.map(([n, l]) => `<div class="ph">${n}</div><div class="pg">${l.map(([e, k]) => `<button data-e="${e}" title="${esc(k)}">${e}</button>`).join('')}</div>`).join('')
+      || '<div class="ph">Nothing found</div>';
+  };
+  draw('');
+  picker.classList.add('on');
+  const r = anchor.getBoundingClientRect(), w = 330, h = Math.min(380, innerHeight - 20);
+  picker.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left - w / 2)) + 'px';
+  picker.style.top = (r.bottom + h + 8 < innerHeight ? r.bottom + 6 : Math.max(8, r.top - h - 6)) + 'px';
+  const q = $('#pickq');
+  q.addEventListener('input', () => {
+    // Anything typed through the Windows emoji panel is used straight away.
+    const g = [...new Intl.Segmenter().segment(q.value)].map(s => s.segment).find(s => /\p{Extended_Pictographic}/u.test(s));
+    if (g) { closePicker(); react(m, g); } else draw(q.value);
+  });
+  q.focus();
+}
+function closePicker() { picker.classList.remove('on'); pickFor = null; }
+picker.addEventListener('click', e => {
+  const b = e.target.closest('button[data-e]');
+  if (b && pickFor) { const m = pickFor; closePicker(); b.dataset.e ? react(m, b.dataset.e) : post('/api/react', { chat: m.chat, id: m.id, emoji: '' }).catch(err => alert(err.message)); }
+});
+document.addEventListener('mousedown', e => { if (picker.classList.contains('on') && !picker.contains(e.target) && !e.target.closest('[data-a="more"]')) closePicker(); });
+
+// Old attachments expire on WhatsApp's servers; say so instead of showing a broken image.
+$('#msgs').addEventListener('error', e => {
+  const el = e.target;
+  if (!el.matches('img.media, img.sticker, video.media, audio')) return;
+  const note = document.createElement('div');
+  note.className = 'del';
+  note.textContent = 'Media no longer available';
+  if (el.matches('img.media') && el.style.backgroundImage) {
+    // keep the blurred preview WhatsApp sent with the message
+    el.removeAttribute('src'); el.removeAttribute('data-full'); el.style.cursor = 'default'; el.after(note);
+  } else el.replaceWith(note);
+}, true);
+
+// Links open in the default browser, never inside this window.
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[href]');
+  if (!a) return;
+  e.preventDefault();
+  post('/api/openurl', { url: a.href }).catch(() => {});
+});
+
+// ---- composing
+function renderReply() {
+  $('#replybar').classList.toggle('on', !!reply);
+  if (reply) $('#replybar .rq').textContent = (reply.from_me ? 'You' : (reply.sender_name || current?.name || '').replace(/^~/, '')) + ': ' + (reply.text || reply.file_name || reply.kind);
+}
+$('#replyx').onclick = () => { reply = null; renderReply(); };
+
+// An agent's draft lands in the message box; nothing is sent until the user presses Enter.
+async function applyDraft(d) {
+  if (current?.jid !== d.chat) await openChat(d.chat);
+  input.value = d.text; grow();
+  if (d.quote && byId.has(d.quote)) { reply = byId.get(d.quote); renderReply(); }
+  input.focus();
+}
+
+const input = $('#input');
+const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; };
+input.addEventListener('input', grow);
+input.addEventListener('keydown', e => {
+  if (mentionKey(e)) return;
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  if (e.key === 'Escape' && reply) { reply = null; renderReply(); }
+});
+$('#send').onclick = send;
+
+// @mentions: typing @ in a group lists its members; the app turns "@Name" into a real mention when sending.
+const mbox = document.createElement('div');
+mbox.id = 'mentions';
+$('#compose').prepend(mbox);
+let members = [], membersFor = '', mentionAt = -1, mentionHits = [], mentionSel = 0;
+async function loadMembers(jid) {
+  if (membersFor !== jid) { membersFor = jid; members = await api('/api/members?chat=' + encodeURIComponent(jid)).catch(() => []); }
+  return members;
+}
+const closeMentions = () => { mbox.classList.remove('on'); mentionAt = -1; };
+async function checkMention() {
+  const pos = input.selectionStart;
+  const m = current?.group && input.value.slice(0, pos).match(/(^|\s)@([^\s@]*)$/);
+  if (!m) return closeMentions();
+  const jid = current.jid, q = m[2].toLowerCase(), list = await loadMembers(jid);
+  if (current?.jid !== jid || input.selectionStart !== pos) return;
+  mentionHits = list.filter(x => x.name.toLowerCase().startsWith(q) || x.name.toLowerCase().split(/\s+/).some(w => w.startsWith(q))).slice(0, 8);
+  if (!mentionHits.length) return closeMentions();
+  mentionAt = pos - m[2].length - 1; mentionSel = 0;
+  renderMentions();
+}
+function renderMentions() {
+  mbox.innerHTML = mentionHits.map((x, i) => `<button data-i="${i}" class="${i === mentionSel ? 'sel' : ''}"><div class="av" style="background:${colorFor(x.jid)}">${avatarHTML(x)}</div><span>${esc(x.name)}</span></button>`).join('');
+  mbox.classList.add('on');
+  mbox.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+}
+function pickMention(i) {
+  const x = mentionHits[i], end = input.selectionStart;
+  const tag = '@' + x.name + ' ';
+  input.value = input.value.slice(0, mentionAt) + tag + input.value.slice(end);
+  const caret = mentionAt + tag.length;
+  input.setSelectionRange(caret, caret);
+  closeMentions(); grow(); input.focus();
+}
+function mentionKey(e) {
+  if (!mbox.classList.contains('on')) return false;
+  const n = mentionHits.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') mentionSel = (mentionSel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n, renderMentions();
+  else if (e.key === 'Enter' || e.key === 'Tab') pickMention(mentionSel);
+  else if (e.key === 'Escape') closeMentions();
+  else return false;
+  e.preventDefault();
+  return true;
+}
+input.addEventListener('input', checkMention);
+input.addEventListener('click', checkMention);
+input.addEventListener('blur', closeMentions);
+mbox.addEventListener('mousedown', e => {
+  e.preventDefault(); // keep focus in the message box
+  const b = e.target.closest('button[data-i]');
+  if (b) pickMention(+b.dataset.i);
+});
+
+async function send() {
+  const text = input.value;
+  if (!current || !text.trim()) return;
+  const quote = reply?.id || '';
+  input.value = ''; grow(); reply = null; renderReply();
+  try { await post('/api/send', { chat: current.jid, text, quote }); }
+  catch (err) { input.value = text; grow(); alert('Not sent: ' + err.message); }
+}
+
+async function sendFiles(files) {
+  if (!current) return;
+  const caption = input.value; input.value = ''; grow();
+  const quote = reply?.id || ''; reply = null; renderReply();
+  for (const [i, f] of [...files].entries()) {
+    const fd = new FormData();
+    fd.append('chat', current.jid); fd.append('file', f, f.name || 'image.png');
+    if (i === 0) { fd.append('caption', caption); fd.append('quote', quote); }
+    try { await api('/api/upload', { method: 'POST', body: fd }); }
+    catch (err) { alert(`Not sent (${f.name}): ${err.message}`); }
+  }
+}
+$('#attach').onclick = () => $('#file').click();
+$('#file').onchange = e => { sendFiles(e.target.files); e.target.value = ''; };
+input.addEventListener('paste', e => {
+  const files = [...e.clipboardData.items].filter(i => i.kind === 'file').map(i => i.getAsFile());
+  if (files.length) { e.preventDefault(); sendFiles(files); }
+});
+let dragDepth = 0;
+document.addEventListener('dragenter', e => { e.preventDefault(); if (current) { dragDepth++; $('#drop').classList.add('on'); } });
+document.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#drop').classList.remove('on'); } });
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#drop').classList.remove('on'); if (e.dataTransfer.files.length) sendFiles(e.dataTransfer.files); });
+
+// ---- connection state
+// An agent asked to send a message: nothing goes out until the user presses Send here.
+function showApproval(p) {
+  if (document.querySelector(`.appr[data-id="${CSS.escape(p.id)}"]`)) return;
+  const card = document.createElement('div');
+  card.className = 'appr'; card.dataset.id = p.id;
+  card.innerHTML = `<div class="ah"><span>Agent wants to send to <b></b></span><button class="open">Open chat</button></div>
+    ${p.quote_text ? '<div class="q"></div>' : ''}${p.file ? '<div class="att"></div>' : ''}<textarea></textarea>
+    <div class="ab"><button class="discard">Discard</button><button class="send">Send</button></div>`;
+  card.querySelector('b').textContent = p.chat_name;
+  if (p.quote_text) card.querySelector('.q').textContent = p.quote_text;
+  if (p.file) {
+    const att = card.querySelector('.att');
+    if (/^image\/(jpeg|png|webp)$/.test(p.mime)) {
+      att.innerHTML = `<img alt="" src="/api/proposal-file?id=${encodeURIComponent(p.id)}&t=${T}">`;
+    } else {
+      // the full path, so the user can see exactly which file on their computer is about to go out
+      att.innerHTML = '<div class="afile"><b></b><span></span></div>';
+      att.querySelector('b').textContent = p.file_name;
+      const mb = p.file_size / 1048576;
+      att.querySelector('b').textContent += ` (${mb >= 1 ? mb.toFixed(1) + ' MB' : Math.max(1, Math.round(p.file_size / 1024)) + ' KB'})`;
+      // the mark keeps a path's slashes in order inside the right-to-left box
+      att.querySelector('span').textContent = '‎' + p.file + '‎';
+      att.querySelector('span').title = p.file;
+    }
+  }
+  const ta = card.querySelector('textarea'); ta.value = p.text;
+  if (p.file) ta.placeholder = 'Add a caption';
+  const decide = async action => {
+    card.querySelectorAll('button').forEach(b => b.disabled = true);
+    try { await post('/api/decide', { id: p.id, action, text: ta.value }); card.remove(); }
+    catch (err) {
+      card.querySelectorAll('button').forEach(b => b.disabled = false);
+      let e = card.querySelector('.err'); if (!e) { e = document.createElement('div'); e.className = 'err'; card.appendChild(e); }
+      e.textContent = err.message;
+    }
+  };
+  card.querySelector('.send').onclick = () => decide('send');
+  card.querySelector('.discard').onclick = () => decide('discard');
+  card.querySelector('.open').onclick = () => openChat(p.chat);
+  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); decide('send'); } });
+  $('#approvals').appendChild(card);
+}
+
+function showState(s) {
+  const card = $('#card'), ov = $('#overlay'), banner = $('#banner');
+  banner.classList.remove('on');
+  if (s.state === 'qr') {
+    ov.classList.add('on');
+    card.innerHTML = `<div class="big">Link WhatsUpLite</div><div class="sub">WhatsApp on your phone → Settings → Linked devices → Link a device</div><img src="${s.qr}" alt="">`;
+  } else if (s.state === 'qr-expired' || s.state === 'loggedout') {
+    ov.classList.add('on');
+    card.innerHTML = `<div class="big">${s.state === 'loggedout' ? 'Logged out' : 'Code expired'}</div><button class="primary" id="relink">New code</button>`;
+    $('#relink').onclick = () => post('/api/relink', {});
+  } else if (s.state === 'replaced') {
+    ov.classList.add('on');
+    card.innerHTML = `<div class="big">WhatsUpLite is open somewhere else</div><div class="sub">Restart it here to take over.</div>`;
+  } else {
+    ov.classList.remove('on');
+    if (s.state === 'offline' || s.state === 'connecting') { banner.textContent = s.state === 'offline' ? 'Reconnecting…' : 'Connecting…'; banner.classList.add('on'); }
+    if (s.state === 'syncing') { banner.textContent = 'Syncing chats…'; banner.classList.add('on'); }
+  }
+}
+
+function sendView() { post('/api/view', { chat: current?.jid || '', focused }).catch(() => {}); }
+const setFocus = f => { focused = f; sendView(); if (f) markRead(); };
+window.addEventListener('focus', () => setFocus(true));
+window.addEventListener('blur', () => setFocus(false));
+document.addEventListener('visibilitychange', () => setFocus(!document.hidden && document.hasFocus()));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { $('#lightbox').classList.remove('on'); closePicker(); }
+  if (e.ctrlKey && e.key.toLowerCase() === 'f') { e.preventDefault(); $('#search').focus(); $('#search').select(); }
+});
+
+function connectEvents() {
+  const es = new EventSource(`/api/events?t=${T}`);
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.t === 'state') showState(ev);
+    else if (ev.t === 'chats') refreshChats();
+    else if (ev.t === 'history' && ev.chat === current?.jid) gotHistory();
+    else if (ev.t === 'draft') applyDraft(ev);
+    else if (ev.t === 'open') openChat(ev.chat);
+    else if (ev.t === 'approval') showApproval(ev.proposal);
+    else if (ev.t === 'approval_done') document.querySelector(`.appr[data-id="${CSS.escape(ev.id)}"]`)?.remove();
+    else if (ev.t === 'msg' && ev.chat === current?.jid) {
+      upsertMsg(ev.msg);
+      if (!ev.msg.from_me && focused) markRead();
+    }
+  };
+  es.onopen = () => {
+    loadChats(); api('/api/state').then(showState);
+    api('/api/proposals').then(list => list.forEach(showApproval)).catch(() => {});
+  };
+}
+
+api('/api/state').then(showState);
+loadChats().then(() => {
+  const o = new URLSearchParams(location.search).get('open'); // launched from a notification
+  if (o) openChat(o);
+});
+connectEvents();
+</script>
+</body>
+</html>

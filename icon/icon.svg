@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34c98f"/>
+      <stop offset="1" stop-color="#0c7a53"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <!-- speech bubble, tail on the lower right -->
+  <path fill="#fff" d="M74 48 H182 Q212 48 212 78 V150 Q212 180 182 180 H176 L198 212 L146 180 H74 Q44 180 44 150 V78 Q44 48 74 48 Z"/>
+  <!-- feather -->
+  <g transform="rotate(40 128 114)">
+    <path fill="#13925f" d="M128 46 C 110 66, 101 94, 104 120 L 117 115 L 106 134 C 111 150, 119 158, 128 162 C 139 156, 148 142, 152 122 L 140 120 L 153 108 C 154 86, 145 62, 128 46 Z"/>
+    <path fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" d="M128 62 C 129 100, 129 130, 128 160"/>
+    <path fill="none" stroke="#13925f" stroke-width="7" stroke-linecap="round" d="M128 160 C 127 172, 125 182, 121 192"/>
+  </g>
+</svg>
