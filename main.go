@@ -166,7 +166,7 @@ func main() {
 	}
 
 	a := &App{
-		ctx: ctx, db: db, dataDir: dataDir, mediaDir: filepath.Join(dataDir, "media"),
+		ctx: ctx, container: container, db: db, dataDir: dataDir, mediaDir: filepath.Join(dataDir, "media"),
 		hub: &Hub{subs: map[chan []byte]struct{}{}}, addr: ln.Addr().String(), token: newToken(), agentToken: newToken(),
 		state: "connecting", contacts: nil, lastToast: map[string]time.Time{}, histAsked: map[string]time.Time{},
 		props: &proposals{m: map[string]*Proposal{}},
@@ -254,6 +254,12 @@ func (a *App) pair() {
 		return
 	}
 	a.cli.Disconnect()
+	if a.cli.Store.Deleted {
+		// Unlinked from the phone: whatsmeow wiped the old device, and a client can't link again on it.
+		a.cli.RemoveEventHandlers()
+		a.cli = whatsmeow.NewClient(a.container.NewDevice(), fileLogger{"wa"})
+		a.cli.AddEventHandler(a.onEvent)
+	}
 	ch, err := a.cli.GetQRChannel(context.Background())
 	if err != nil {
 		logf("qr channel: %v", err)

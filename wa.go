@@ -15,6 +15,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waWeb"
+	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
@@ -23,6 +24,7 @@ import (
 type App struct {
 	ctx        context.Context
 	cli        *whatsmeow.Client
+	container  *sqlstore.Container
 	db         *DB
 	hub        *Hub
 	dataDir    string
