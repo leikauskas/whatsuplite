@@ -29,6 +29,7 @@ import (
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -52,8 +53,12 @@ func logf(format string, args ...any) { log.Printf(format, args...) }
 
 type fileLogger struct{ module string }
 
-func (l fileLogger) Errorf(msg string, args ...any) { log.Printf("[%s ERROR] "+msg, append([]any{l.module}, args...)...) }
-func (l fileLogger) Warnf(msg string, args ...any)  { log.Printf("[%s WARN] "+msg, append([]any{l.module}, args...)...) }
+func (l fileLogger) Errorf(msg string, args ...any) {
+	log.Printf("[%s ERROR] "+msg, append([]any{l.module}, args...)...)
+}
+func (l fileLogger) Warnf(msg string, args ...any) {
+	log.Printf("[%s WARN] "+msg, append([]any{l.module}, args...)...)
+}
 func (l fileLogger) Infof(msg string, args ...any)  {}
 func (l fileLogger) Debugf(msg string, args ...any) {}
 func (l fileLogger) Sub(module string) waLog.Logger { return fileLogger{l.module + "/" + module} }
@@ -166,7 +171,7 @@ func main() {
 	}
 
 	a := &App{
-		ctx: ctx, container: container, db: db, dataDir: dataDir, mediaDir: filepath.Join(dataDir, "media"),
+		ctx: ctx, container: container, retries: map[string]chan *events.MediaRetry{}, db: db, dataDir: dataDir, mediaDir: filepath.Join(dataDir, "media"),
 		hub: &Hub{subs: map[chan []byte]struct{}{}}, addr: ln.Addr().String(), token: newToken(), agentToken: newToken(),
 		state: "connecting", contacts: nil, lastToast: map[string]time.Time{}, histAsked: map[string]time.Time{},
 		props: &proposals{m: map[string]*Proposal{}},
@@ -217,6 +222,9 @@ func main() {
 	if !demo {
 		registerLinks()
 		firstRunStartup(dataDir)
+		if startupEnabled() {
+			setStartup(true) // keeps the entry pointing at this exe if it was moved or updated
+		}
 	}
 	os.WriteFile(hwndFile, []byte(strconv.FormatUint(uint64(a.win.hwnd), 10)), 0o644)
 	wv.SetSize(winW, winH, webview2.HintNone)
@@ -289,8 +297,8 @@ func (a *App) pair() {
 
 // notify shows a Windows toast for a new message when the user isn't looking at that chat.
 func (a *App) notify(chat types.JID, m *Msg) {
-	_, muted := a.db.ChatUnread(m.Chat)
-	if muted > time.Now().Unix() {
+	names := a.mentionNames(m.Raw)
+	if _, muted := a.db.ChatUnread(m.Chat); muted > time.Now().Unix() && !a.mentionsMe(names) {
 		return
 	}
 	a.mu.Lock()
@@ -308,7 +316,7 @@ func (a *App) notify(chat types.JID, m *Msg) {
 			title = a.displayName(chat, c.Name)
 		}
 	}
-	body := preview(m)
+	body := withNames(preview(m), names)
 	if chat.Server == types.GroupServer {
 		if s, err := types.ParseJID(m.Sender); err == nil {
 			body = strings.TrimPrefix(a.displayName(s, ""), "~") + ": " + body
@@ -318,6 +326,20 @@ func (a *App) notify(chat types.JID, m *Msg) {
 		a.win.Flash()
 	}
 	go toast(strings.TrimPrefix(title, "~"), body, m.Chat)
+}
+
+// mentionsMe is true when a message @-mentions the user; those notify even in muted chats, as on the phone.
+func (a *App) mentionsMe(names map[string]mention) bool {
+	if a.cli.Store.ID == nil {
+		return false
+	}
+	me := a.cli.Store.ID.ToNonAD().String()
+	for _, n := range names {
+		if n.JID == me {
+			return true
+		}
+	}
+	return false
 }
 
 func xmlText(s string) string {

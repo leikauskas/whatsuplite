@@ -27,7 +27,9 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waMmsRetry"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/proto"
 )
@@ -276,7 +278,22 @@ func (a *App) mediaFile(m *Msg) (string, error) {
 		if err := proto.Unmarshal(m.Raw, &msg); err != nil {
 			return nil, err
 		}
-		data, err := a.cli.DownloadAny(a.ctx, &msg)
+		part, setPath := mediaPart(&msg)
+		if part == nil {
+			return nil, whatsmeow.ErrNothingDownloadableFound
+		}
+		data, err := a.cli.Download(a.ctx, part)
+		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith403) || errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
+			errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
+			var path string
+			if path, err = a.reupload(m, part.GetMediaKey()); err == nil {
+				setPath(path)
+				if raw, err := proto.Marshal(&msg); err == nil {
+					a.db.SetRaw(m.Chat, m.ID, raw)
+				}
+				data, err = a.cli.Download(a.ctx, part)
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -290,6 +307,69 @@ func (a *App) mediaFile(m *Msg) (string, error) {
 		return nil, os.Rename(tmp, path)
 	})
 	return path, err
+}
+
+// mediaPart finds a message's attachment and returns a way to point it at a new server path.
+func mediaPart(msg *waE2E.Message) (whatsmeow.DownloadableMessage, func(string)) {
+	msg = unwrapChild(msg)
+	switch {
+	case msg.ImageMessage != nil:
+		x := msg.ImageMessage
+		return x, func(p string) { x.DirectPath = &p }
+	case msg.PtvMessage != nil:
+		x := msg.PtvMessage
+		return x, func(p string) { x.DirectPath = &p }
+	case msg.VideoMessage != nil:
+		x := msg.VideoMessage
+		return x, func(p string) { x.DirectPath = &p }
+	case msg.AudioMessage != nil:
+		x := msg.AudioMessage
+		return x, func(p string) { x.DirectPath = &p }
+	case msg.DocumentMessage != nil:
+		x := msg.DocumentMessage
+		return x, func(p string) { x.DirectPath = &p }
+	case msg.StickerMessage != nil:
+		x := msg.StickerMessage
+		return x, func(p string) { x.DirectPath = &p }
+	}
+	return nil, nil
+}
+
+// reupload asks the phone to put an expired attachment back on WhatsApp's servers and returns its new path.
+func (a *App) reupload(m *Msg, mediaKey []byte) (string, error) {
+	chat, err := types.ParseJID(m.Chat)
+	if err != nil {
+		return "", err
+	}
+	sender, _ := types.ParseJID(m.Sender)
+	info := &types.MessageInfo{ID: m.ID, MessageSource: types.MessageSource{
+		Chat: chat, Sender: sender, IsFromMe: m.FromMe, IsGroup: chat.Server == types.GroupServer,
+	}}
+	ch := make(chan *events.MediaRetry, 1)
+	a.mu.Lock()
+	a.retries[m.ID] = ch
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		delete(a.retries, m.ID)
+		a.mu.Unlock()
+	}()
+	if err := a.cli.SendMediaRetryReceipt(a.ctx, info, mediaKey); err != nil {
+		return "", err
+	}
+	select {
+	case evt := <-ch:
+		res, err := whatsmeow.DecryptMediaRetryNotification(evt, mediaKey)
+		if err != nil {
+			return "", err
+		}
+		if res.GetResult() != waMmsRetry.MediaRetryNotification_SUCCESS || res.GetDirectPath() == "" {
+			return "", fmt.Errorf("the phone no longer has this file (%s)", res.GetResult())
+		}
+		return res.GetDirectPath(), nil
+	case <-time.After(30 * time.Second):
+		return "", errors.New("the phone didn't answer")
+	}
 }
 
 func (a *App) apiMedia(w http.ResponseWriter, r *http.Request) {
@@ -412,9 +492,13 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxUpload))
+	data, err := io.ReadAll(io.LimitReader(file, maxUpload+1))
 	if err != nil {
 		fail(w, 400, err)
+		return
+	}
+	if len(data) > maxUpload {
+		fail(w, 413, errors.New("files over 100 MB can't be sent"))
 		return
 	}
 	rec, err := a.sendMedia(chat, data, hdr.Filename, r.FormValue("caption"), r.FormValue("quote"))

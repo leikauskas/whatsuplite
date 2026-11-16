@@ -19,12 +19,14 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 type App struct {
 	ctx        context.Context
 	cli        *whatsmeow.Client
 	container  *sqlstore.Container
+	retries    map[string]chan *events.MediaRetry
 	db         *DB
 	hub        *Hub
 	dataDir    string
@@ -102,9 +104,22 @@ func (a *App) onEvent(raw any) {
 			go a.loadGroups()
 		}
 	case *events.MarkChatAsRead:
+		jid := a.toPN(evt.JID).String()
 		if evt.Action.GetRead() {
-			a.db.SetChatField(a.toPN(evt.JID).String(), "unread", 0)
-			a.hub.Send(map[string]any{"t": "chats"})
+			a.db.SetChatField(jid, "unread", 0)
+		} else if n, _ := a.db.ChatUnread(jid); n == 0 {
+			a.db.SetChatField(jid, "unread", 1) // marked unread on the phone
+		}
+		a.hub.Send(map[string]any{"t": "chats"})
+	case *events.MediaRetry:
+		a.mu.Lock()
+		ch := a.retries[evt.MessageID]
+		a.mu.Unlock()
+		if ch != nil {
+			select {
+			case ch <- evt:
+			default:
+			}
 		}
 	case *events.Mute:
 		until := int64(0)
@@ -249,7 +264,8 @@ func (a *App) handleMessage(evt *events.Message, live bool) {
 	a.claude.observe(rec)
 	a.pushMsg(chatS, rec.ID)
 	a.hub.Send(map[string]any{"t": "chats"})
-	if addUnread > 0 {
+	// Messages queued while the PC slept arrive as live ones; only fresh ones get a notification.
+	if addUnread > 0 && time.Since(evt.Info.Timestamp) < 2*time.Minute {
 		a.notify(chat, rec)
 	}
 }
@@ -554,7 +570,11 @@ func buildMsg(chat, id, sender string, fromMe bool, ts int64, m *waE2E.Message) 
 	}
 	raw, _ := proto.Marshal(m)
 	rec := &Msg{Chat: chat, ID: id, Sender: sender, FromMe: fromMe, TS: ts, Kind: kind, Text: text, Raw: raw}
+	m = unwrapChild(m)
 	switch {
+	case m.GetPtvMessage() != nil:
+		x := m.GetPtvMessage()
+		rec.Mime, rec.Thumb, rec.W, rec.H = x.GetMimetype(), x.GetJPEGThumbnail(), int(x.GetWidth()), int(x.GetHeight())
 	case m.GetImageMessage() != nil:
 		x := m.GetImageMessage()
 		rec.Mime, rec.Thumb, rec.W, rec.H = x.GetMimetype(), x.GetJPEGThumbnail(), int(x.GetWidth()), int(x.GetHeight())
@@ -582,7 +602,40 @@ func buildMsg(chat, id, sender string, fromMe bool, ts int64, m *waE2E.Message) 
 	return rec
 }
 
+// unwrapChild opens the wrapper WhatsApp puts around each photo of an album.
+func unwrapChild(m *waE2E.Message) *waE2E.Message {
+	if c := m.GetAssociatedChildMessage().GetMessage(); c != nil {
+		return c
+	}
+	return m
+}
+
+// notContent are the parts of a message that carry no visible content on their own:
+// keys, receipts, votes, pins, wrappers whatsmeow already opened, and similar bookkeeping.
+var notContent = map[protoreflect.Name]bool{
+	"senderKeyDistributionMessage": true, "fastRatchetKeySenderKeyDistributionMessage": true,
+	"messageContextInfo": true, "protocolMessage": true, "reactionMessage": true, "encReactionMessage": true,
+	"pollUpdateMessage": true, "keepInChatMessage": true, "pinInChatMessage": true, "call": true, "chat": true,
+	"deviceSentMessage": true, "viewOnceMessage": true, "viewOnceMessageV2": true, "viewOnceMessageV2Extension": true,
+	"ephemeralMessage": true, "documentWithCaptionMessage": true, "editedMessage": true, "stickerSyncRmrMessage": true,
+	"messageHistoryBundle": true, "messageHistoryNotice": true, "encCommentMessage": true, "encEventResponseMessage": true,
+	"placeholderMessage": true, "secretEncryptedMessage": true, "albumMessage": true, "groupRootKeyShare": true,
+	"rootSecretDistributeMessage": true, "statusMentionMessage": true, "groupStatusMentionMessage": true,
+	"splitPaymentUpdateMessage": true, "acp2SettingMessage": true, "limitSharingMessage": true,
+	"requestLocationUpdateMessage": true, "eventCoverImage": true, "statusNotificationMessage": true,
+}
+
+func hasUnknownContent(m *waE2E.Message) bool {
+	found := false
+	m.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		found = !notContent[fd.Name()]
+		return !found
+	})
+	return found
+}
+
 func describe(m *waE2E.Message) (kind, text string, ci *waE2E.ContextInfo) {
+	m = unwrapChild(m)
 	switch {
 	case m == nil:
 		return "", "", nil
@@ -594,6 +647,9 @@ func describe(m *waE2E.Message) (kind, text string, ci *waE2E.ContextInfo) {
 	case m.GetImageMessage() != nil:
 		x := m.GetImageMessage()
 		return "image", x.GetCaption(), x.GetContextInfo()
+	case m.GetPtvMessage() != nil:
+		x := m.GetPtvMessage()
+		return "video", x.GetCaption(), x.GetContextInfo()
 	case m.GetVideoMessage() != nil:
 		x := m.GetVideoMessage()
 		if x.GetGifPlayback() {
@@ -622,9 +678,33 @@ func describe(m *waE2E.Message) (kind, text string, ci *waE2E.ContextInfo) {
 		x := m.GetLiveLocationMessage()
 		return "location", fmt.Sprintf("%.6f,%.6f Live location", x.GetDegreesLatitude(), x.GetDegreesLongitude()), nil
 	}
-	poll := m.GetPollCreationMessageV3()
-	if poll == nil {
-		poll = m.GetPollCreationMessage()
+	if x := m.GetEventMessage(); x != nil {
+		text := "Event: " + x.GetName()
+		if t := x.GetStartTime(); t > 0 {
+			text += "\n" + time.Unix(t, 0).Local().Format("Mon 2 Jan 2006, 15:04")
+		}
+		if x.GetIsCanceled() {
+			text += " (cancelled)"
+		}
+		if d := strings.TrimSpace(x.GetDescription()); d != "" {
+			text += "\n" + d
+		}
+		return "event", text, x.GetContextInfo()
+	}
+	if x := m.GetGroupInviteMessage(); x != nil {
+		text := "Group invite: " + x.GetGroupName()
+		if c := strings.TrimSpace(x.GetCaption()); c != "" {
+			text += "\n" + c
+		}
+		return "invite", text, x.GetContextInfo()
+	}
+	var poll *waE2E.PollCreationMessage
+	for _, p := range []*waE2E.PollCreationMessage{m.GetPollCreationMessageV3(), m.GetPollCreationMessage(),
+		m.GetPollCreationMessageV2(), m.GetPollCreationMessageV5(), m.GetPollCreationMessageV6()} {
+		if p != nil {
+			poll = p
+			break
+		}
 	}
 	if poll != nil {
 		var b strings.Builder
@@ -634,6 +714,10 @@ func describe(m *waE2E.Message) (kind, text string, ci *waE2E.ContextInfo) {
 		}
 		return "poll", b.String(), poll.GetContextInfo()
 	}
+	// Anything else with content still gets a bubble, so nothing arrives silently.
+	if hasUnknownContent(m) {
+		return "unsupported", "This message can't be shown here yet. Open it on your phone.", nil
+	}
 	return "", "", nil
 }
 
@@ -641,6 +725,7 @@ func preview(m *Msg) string {
 	label := map[string]string{
 		"image": "Photo", "video": "Video", "gif": "GIF", "audio": "Audio", "voice": "Voice message",
 		"document": "Document", "sticker": "Sticker", "contact": "Contact", "location": "Location", "poll": "Poll",
+		"unsupported": "Message",
 	}[m.Kind]
 	text := strings.TrimSpace(m.Text)
 	if m.Kind == "document" && m.FileName != "" {

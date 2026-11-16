@@ -230,6 +230,13 @@ func (d *DB) MarkDeleted(chat, id string) error {
 	return err
 }
 
+func (d *DB) SetRaw(chat, id string, raw []byte) error {
+	d.wmu.Lock()
+	defer d.wmu.Unlock()
+	_, err := d.Exec(`UPDATE messages SET raw=? WHERE chat=? AND id=?`, raw, chat, id)
+	return err
+}
+
 func (d *DB) EditText(chat, id, text string) error {
 	d.wmu.Lock()
 	defer d.wmu.Unlock()

@@ -10,9 +10,9 @@ It's unofficial. It links to your account as a companion device, the same way Wh
 
 ## What it does
 
-Chats, groups and communities, with photos, videos, voice notes, documents, polls, replies, reactions and read ticks. Your history syncs when you link, and older messages come from your phone when you scroll up or open a chat with nothing stored yet. Search covers chat names and message text. Clicking a notification opens that chat. Closing the window keeps it running in the tray, and it starts with Windows.
+Chats, groups and communities, with photos, videos, voice notes, documents, events, replies, reactions and read ticks. Your full history syncs when you link, and older messages come from your phone when you scroll up or open a chat with nothing stored yet. Search covers chat names and message text. Clicking a notification opens that chat. Closing the window keeps it running in the tray, and it starts with Windows.
 
-There's no calling, no Status and no recording voice notes yet. You can't edit or delete your own messages either.
+There's no calling, no Status and no recording voice notes yet. You can't edit or delete your own messages either. Polls show the question and options, but votes only show on your phone, and message types it doesn't know yet appear as a note telling you to open them there.
 
 ## Claude
 
@@ -69,7 +69,7 @@ The group gets created and pinned on the next start. Claude runs in `work_dir`, 
 
 ## How it works
 
-whatsmeow handles the WhatsApp protocol and keeps the session in SQLite. Messages go into a second SQLite database. The Go program serves the interface and a small API on 127.0.0.1 with two keys: the window's key can do everything, and the agent key in the `endpoint` file can only read, draft and propose. Media downloads the first time you look at it and stays cached.
+whatsmeow handles the WhatsApp protocol and keeps the session in SQLite. Messages go into a second SQLite database. The Go program serves the interface and a small API on 127.0.0.1 with two keys: the window's key can do everything, and the agent key in the `endpoint` file can only read, draft and propose. Media downloads the first time you look at it and stays cached. When WhatsApp's servers no longer have an old file, the app asks your phone to upload it again.
 
 Run it with `--demo` and `WHATSUPLITE_DATA` pointing at another folder and it shows whatever is in that folder, offline. That's how I took the screenshot.
 

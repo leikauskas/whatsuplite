@@ -87,6 +87,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .b .del { font-style: italic; color: var(--muted); }
 .b .q { border-left: 3px solid var(--accent); background: var(--quote); border-radius: 5px; padding: 4px 8px; margin-bottom: 4px; font-size: 13px; color: var(--muted); max-height: 3.2em; overflow: hidden; cursor: pointer; }
 .b img.media, .b video.media { display: block; max-width: 100%; height: auto; object-fit: contain; border-radius: 6px; margin: 2px 0 4px; background: var(--quote) center/cover no-repeat; cursor: pointer; }
+.b .retry { display: block; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
 .b img.sticker { width: 140px; height: 140px; object-fit: contain; display: block; }
 .b audio { display: block; width: 280px; max-width: 100%; margin: 2px 0; }
 .doc { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; background: var(--quote); cursor: pointer; margin: 2px 0 4px; }
@@ -377,8 +378,12 @@ $('#tabs').addEventListener('click', e => {
 });
 
 // ---- messages
+// Each chat keeps its own half-written message, so switching chats never carries text to the wrong person.
+const drafts = new Map();
 async function openChat(jid, name) {
   const c = chats.find(x => x.jid === jid) || { jid, name: name || jid };
+  if (current) drafts.set(current.jid, input.value);
+  input.value = drafts.get(jid) || ''; grow();
   current = c; msgs = []; byId = new Map(); done = false; reply = null; renderReply(); pending = []; renderTray();
   $('#empty').hidden = true; $('#head').hidden = false; $('#msgs').hidden = false; $('#compose').hidden = false;
   $('#head .av').style.background = colorFor(c.jid); $('#head .av').innerHTML = avatarHTML(c);
@@ -486,6 +491,7 @@ function bodyHTML(m) {
       return h + metaHTML(m);
     }
     case 'contact': h += `<div>Contact: ${esc(m.text)}</div>`; return h + metaHTML(m);
+    case 'unsupported': h += `<div class="del">${esc(m.text)}</div>`; return h + metaHTML(m);
     case 'poll': {
       const [q, ...opts] = m.text.split('\n');
       h += `<div><b>Poll: ${esc(q)}</b></div><div class="txt">${esc(opts.join('\n'))}</div>`;
@@ -547,15 +553,31 @@ function upsertMsg(m) {
     if (i >= 0) msgs[i] = m;
     byId.set(m.id, m);
     const el = box.querySelector(`.row[data-id="${CSS.escape(m.id)}"]`);
-    if (el) el.replaceWith(rowEl(m, msgs[i - 1] && new Date(msgs[i - 1].ts * 1000).toDateString() === new Date(m.ts * 1000).toDateString() ? msgs[i - 1] : null));
+    if (el) {
+      const row = rowEl(m, msgs[i - 1] && sameDay(msgs[i - 1], m) ? msgs[i - 1] : null);
+      // A reaction or tick update must not stop a voice note or video that's playing in this bubble.
+      for (const media of el.querySelectorAll('audio, video')) {
+        const fresh = [...row.querySelectorAll(media.tagName)].find(x => x.getAttribute('src') === media.getAttribute('src'));
+        if (fresh) fresh.replaceWith(media);
+      }
+      el.replaceWith(row);
+    }
     return;
   }
   byId.set(m.id, m);
   msgs.push(m);
   msgs.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1));
-  renderMsgs(false);
+  // A new message at the end is appended; redrawing everything would stop playback and drop selections.
+  if (msgs[msgs.length - 1] === m && box.lastElementChild) {
+    const prev = msgs[msgs.length - 2];
+    if (!prev || !sameDay(prev, m)) {
+      const d = document.createElement('div'); d.className = 'day'; d.textContent = fmtDay(m.ts); box.appendChild(d);
+    }
+    box.appendChild(rowEl(m, prev && sameDay(prev, m) && prev.kind !== 'system' ? prev : null));
+  } else renderMsgs(false);
   if (nearBottom || m.from_me) box.scrollTop = box.scrollHeight;
 }
+const sameDay = (a, b) => new Date(a.ts * 1000).toDateString() === new Date(b.ts * 1000).toDateString();
 
 // Clicking a mention shows who it is, with a way to message them.
 const person = document.createElement('div');
@@ -644,14 +666,23 @@ picker.addEventListener('click', e => {
 });
 document.addEventListener('mousedown', e => { if (picker.classList.contains('on') && !picker.contains(e.target) && !e.target.closest('[data-a="more"]')) closePicker(); });
 
-// Old attachments expire on WhatsApp's servers; say so instead of showing a broken image.
+// The server already asked the phone for expired files, so a failure here is usually the phone being offline
+// or no longer having the file. Say so, and let the user try again.
 $('#msgs').addEventListener('error', e => {
   const el = e.target;
   if (!el.matches('img.media, img.sticker, video.media, audio')) return;
-  const note = document.createElement('div');
-  note.className = 'del';
-  note.textContent = 'Media no longer available';
-  if (el.matches('img.media') && el.style.backgroundImage) {
+  const src = el.getAttribute('src');
+  if (!src) return;
+  const note = document.createElement('button');
+  note.className = 'del retry';
+  note.textContent = "Couldn't load this. Click to try again";
+  const keepPreview = el.matches('img.media') && el.style.backgroundImage;
+  note.onclick = () => {
+    if (keepPreview) note.remove(); else note.replaceWith(el);
+    el.dataset.full = '1'; el.style.cursor = '';
+    el.setAttribute('src', src.replace(/&r=\d+$/, '') + '&r=' + Date.now());
+  };
+  if (keepPreview) {
     // keep the blurred preview WhatsApp sent with the message
     el.removeAttribute('src'); el.removeAttribute('data-full'); el.style.cursor = 'default'; el.after(note);
   } else el.replaceWith(note);
@@ -685,7 +716,7 @@ const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(
 input.addEventListener('input', grow);
 input.addEventListener('keydown', e => {
   if (mentionKey(e)) return;
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   if (e.key === 'Escape') {
     if (reply) { reply = null; renderReply(); }
     else if (pending.length) { pending = []; renderTray(); }
@@ -795,11 +826,12 @@ async function send() {
 
 async function sendFiles(files) {
   if (!current) return;
+  const chat = current.jid; // the user may switch chats while files upload
   const caption = input.value; input.value = ''; grow();
   const quote = reply?.id || ''; reply = null; renderReply();
   for (const [i, f] of [...files].entries()) {
     const fd = new FormData();
-    fd.append('chat', current.jid); fd.append('file', f, f.name || 'image.png');
+    fd.append('chat', chat); fd.append('file', f, f.name || 'image.png');
     if (i === 0) { fd.append('caption', caption); fd.append('quote', quote); }
     try { await api('/api/upload', { method: 'POST', body: fd }); }
     catch (err) { alert(`Not sent (${f.name}): ${err.message}`); }

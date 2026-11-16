@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"os"
 	"path/filepath"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -24,25 +25,30 @@ var (
 	procGetCursorPos     = user32.NewProc("GetCursorPos")
 	procPostMessage      = user32.NewProc("PostMessageW")
 	procIsIconic         = user32.NewProc("IsIconic")
+	procRegisterWinMsg   = user32.NewProc("RegisterWindowMessageW")
+
+	// Explorer broadcasts this after it restarts; tray icons must be added again or they're gone.
+	wmTaskbarCreated, _, _ = procRegisterWinMsg.Call(uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("TaskbarCreated"))))
 )
 
 const (
-	wmClose      = 0x0010
-	wmCopyData   = 0x004A
-	wmTray       = 0x8000 + 1 // WM_APP + 1
-	wmLButtonUp  = 0x0202
-	wmLButtonDbl = 0x0203
-	wmRButtonUp  = 0x0205
-	nimAdd       = 0
-	nimModify    = 1
-	nimDelete    = 2
-	nifMessage   = 1
-	nifIcon      = 2
-	nifTip       = 4
-	menuOpen     = 1
-	menuStartup  = 2
-	menuQuit     = 3
-	runKey       = `Software\Microsoft\Windows\CurrentVersion\Run`
+	wmClose         = 0x0010
+	wmSettingChange = 0x001A
+	wmCopyData      = 0x004A
+	wmTray          = 0x8000 + 1 // WM_APP + 1
+	wmLButtonUp     = 0x0202
+	wmLButtonDbl    = 0x0203
+	wmRButtonUp     = 0x0205
+	nimAdd          = 0
+	nimModify       = 1
+	nimDelete       = 2
+	nifMessage      = 1
+	nifIcon         = 2
+	nifTip          = 4
+	menuOpen        = 1
+	menuStartup     = 2
+	menuQuit        = 3
+	runKey          = `Software\Microsoft\Windows\CurrentVersion\Run`
 )
 
 type notifyIconData struct {
@@ -94,7 +100,17 @@ func (a *App) setupTray(icon uintptr, scale float64) {
 	trayIcon = notifyIconData{HWnd: a.win.hwnd, UID: 1, UFlags: nifMessage | nifIcon | nifTip, UCallbackMessage: wmTray, HIcon: icon}
 	trayIcon.CbSize = uint32(unsafe.Sizeof(trayIcon))
 	copy(trayIcon.SzTip[:], windows.StringToUTF16(appID))
-	procShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&trayIcon)))
+	if ok, _, _ := procShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&trayIcon))); ok == 0 {
+		// At sign-in the taskbar may not exist yet; keep trying for a minute.
+		go func() {
+			for i := 0; i < 30; i++ {
+				time.Sleep(2 * time.Second)
+				if ok, _, _ := procShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&trayIcon))); ok != 0 {
+					return
+				}
+			}
+		}()
+	}
 }
 
 // setTrayState shows the unread count in the tooltip and a dot on the icon while anything is unread.
@@ -130,6 +146,12 @@ func showWindow(hwnd uintptr) {
 }
 
 func wndProc(hwnd, msg, wp, lp uintptr) uintptr {
+	switch {
+	case msg == wmTaskbarCreated && wmTaskbarCreated != 0:
+		procShellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&trayIcon)))
+	case msg == wmSettingChange && tray != nil && tray.win != nil:
+		tray.win.styleTitleBar() // follows a light/dark switch
+	}
 	switch msg {
 	case wmClose:
 		if !quitting {
@@ -179,7 +201,7 @@ func trayMenu(hwnd uintptr) {
 	add(0, menuQuit, "Quit")
 	var pt struct{ X, Y int32 }
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
-	procSetForeground.Call(hwnd) // or the menu won't close when clicking elsewhere
+	procSetForeground.Call(hwnd)                                                                 // or the menu won't close when clicking elsewhere
 	cmd, _, _ := procTrackPopupMenu.Call(m, 0x100|0x2, uintptr(pt.X), uintptr(pt.Y), 0, hwnd, 0) // TPM_RETURNCMD|TPM_RIGHTBUTTON
 	procPostMessage.Call(hwnd, 0, 0, 0)
 	switch cmd {
