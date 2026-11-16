@@ -191,6 +191,7 @@ func main() {
 	} else {
 		registerToastApp(filepath.Join(dataDir, "whatsuplite.ico"))
 		go a.start()
+		go a.pruneMedia()
 	}
 
 	// Without this Windows renders the window at 96 DPI and stretches it, which looks blurry on scaled screens.

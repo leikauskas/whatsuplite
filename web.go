@@ -271,6 +271,8 @@ func (a *App) mediaFile(m *Msg) (string, error) {
 	}
 	path := a.cachePath(m)
 	if _, err := os.Stat(path); err == nil {
+		now := time.Now()
+		os.Chtimes(path, now, now) // marks it as recently used for pruneMedia
 		return path, nil
 	}
 	_, err, _ := downloads.Do(path, func() (any, error) {
@@ -304,7 +306,11 @@ func (a *App) mediaFile(m *Msg) (string, error) {
 		if err := os.WriteFile(tmp, data, 0o644); err != nil {
 			return nil, err
 		}
-		return nil, os.Rename(tmp, path)
+		if err := os.Rename(tmp, path); err != nil {
+			return nil, err
+		}
+		go a.pruneMedia()
+		return nil, nil
 	})
 	return path, err
 }

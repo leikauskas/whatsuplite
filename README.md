@@ -69,7 +69,7 @@ The group gets created and pinned on the next start. Claude runs in `work_dir`, 
 
 ## How it works
 
-whatsmeow handles the WhatsApp protocol and keeps the session in SQLite. Messages go into a second SQLite database. The Go program serves the interface and a small API on 127.0.0.1 with two keys: the window's key can do everything, and the agent key in the `endpoint` file can only read, draft and propose. Media downloads the first time you look at it and stays cached. When WhatsApp's servers no longer have an old file, the app asks your phone to upload it again.
+whatsmeow handles the WhatsApp protocol and keeps the session in SQLite. Messages go into a second SQLite database. The Go program serves the interface and a small API on 127.0.0.1 with two keys: the window's key can do everything, and the agent key in the `endpoint` file can only read, draft and propose. Media downloads the first time you look at it and stays cached. When WhatsApp's servers no longer have an old file, the app asks your phone to upload it again. The cache stays under 2 GB: past that, the files you opened longest ago are removed, and they download again if you open them.
 
 Run it with `--demo` and `WHATSUPLITE_DATA` pointing at another folder and it shows whatever is in that folder, offline. That's how I took the screenshot.
 
