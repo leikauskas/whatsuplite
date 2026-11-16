@@ -20,6 +20,20 @@ const (
 
 var pruning atomic.Bool
 
+// expireLoop removes disappearing messages once their time is up, as the phone does.
+func (a *App) expireLoop() {
+	for {
+		if chats := a.db.DeleteExpired(time.Now().Unix()); len(chats) > 0 {
+			for _, c := range chats {
+				a.db.RefreshPreview(c)
+			}
+			a.hub.Send(map[string]any{"t": "expired", "chats": chats})
+			a.hub.Send(map[string]any{"t": "chats"})
+		}
+		time.Sleep(5 * time.Minute)
+	}
+}
+
 func (a *App) pruneMedia() {
 	if !pruning.CompareAndSwap(false, true) {
 		return

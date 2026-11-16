@@ -85,8 +85,32 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .b .meta { float: right; margin: 6px 0 -4px 10px; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .b .meta .tick.read { color: var(--tick); }
 .b .del { font-style: italic; color: var(--muted); }
-.b .q { border-left: 3px solid var(--accent); background: var(--quote); border-radius: 5px; padding: 4px 8px; margin-bottom: 4px; font-size: 13px; color: var(--muted); max-height: 3.2em; overflow: hidden; cursor: pointer; }
+.b .q { border-left: 3px solid var(--accent); background: var(--quote); border-radius: 5px; padding: 4px 8px; margin-bottom: 4px; font-size: 13px; color: var(--muted); max-height: 4.6em; overflow: hidden; cursor: pointer; }
 .b img.media, .b video.media { display: block; max-width: 100%; height: auto; object-fit: contain; border-radius: 6px; margin: 2px 0 4px; background: var(--quote) center/cover no-repeat; cursor: pointer; }
+#sidetop { display: flex; align-items: center; }
+#sidetop #search { flex: 1; margin-right: 6px; min-width: 0; }
+#newchat-btn { margin-right: 12px; width: 34px; height: 34px; flex: none; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; display: grid; place-items: center; }
+#newchat { position: fixed; inset: 0; display: none; place-items: start center; padding-top: 80px; background: rgba(0,0,0,.35); z-index: 20; }
+#newchat.on { display: grid; }
+#newchat .panel { width: 360px; max-height: 70vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+#newchat input { margin: 12px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; outline: none; }
+#newchat .list { overflow-y: auto; padding: 0 6px 8px; }
+#newchat .item { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; cursor: pointer; }
+#newchat .item:hover, #newchat .item:focus { background: var(--quote); outline: none; }
+#newchat .item small { color: var(--muted); margin-left: 8px; }
+#newchat .note { padding: 8px 14px; color: var(--muted); font-size: 13px; }
+#head .htext { display: flex; flex-direction: column; min-width: 0; }
+#head .sub { font-size: 12px; color: var(--accent); }
+#composer[hidden] { display: none; }
+#readonly { display: none; padding: 10px; text-align: center; color: var(--muted); font-size: 13px; }
+#readonly.on { display: block; }
+.b .q .qn { display: block; font-weight: 600; color: var(--accent); }
+.poll .opt { position: relative; display: block; width: 100%; min-width: 220px; margin-top: 6px; padding: 6px 10px; overflow: hidden; text-align: left; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }
+.poll .opt.mine { border-color: var(--accent); }
+.poll .opt .bar { position: absolute; inset: 0 auto 0 0; background: var(--quote); }
+.poll .opt span { position: relative; }
+.poll .opt .n { float: right; margin-left: 10px; color: var(--muted); }
+.b .reveal { display: block; margin-top: 4px; padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
 .b .retry { display: block; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
 .b img.sticker { width: 140px; height: 140px; object-fit: contain; display: block; }
 .b audio { display: block; width: 280px; max-width: 100%; margin: 2px 0; }
@@ -185,13 +209,13 @@ a { color: var(--accent); }
 <div id="banner"></div>
 <div id="app">
   <aside id="side">
-    <input id="search" placeholder="Search" autocomplete="off">
+    <div id="sidetop"><input id="search" placeholder="Search" autocomplete="off"><button id="newchat-btn" title="New chat"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button></div>
     <div id="tabs"><button data-f="all" class="on">All</button><button data-f="unread">Unread</button><button data-f="groups">Groups</button><button data-f="communities">Communities</button><button data-f="archived">Archived</button></div>
     <div id="list"></div>
   </aside>
   <main id="main">
     <div id="empty">Pick a chat</div>
-    <header id="head" hidden><div class="av"></div><div class="title"></div></header>
+    <header id="head" hidden><div class="av"></div><div class="htext"><div class="title"></div><div class="sub"></div></div></header>
     <div id="msgs" hidden></div>
     <footer id="compose" hidden>
       <div id="replybar"><div class="rq"></div><button id="replyx" title="Cancel">✕</button></div>
@@ -201,6 +225,7 @@ a { color: var(--accent); }
         <textarea id="input" rows="1" placeholder="Message"></textarea>
         <button class="iconbtn" id="send" title="Send">➤</button>
       </div>
+      <div id="readonly">Only admins can send messages</div>
       <input type="file" id="file" hidden multiple>
     </footer>
     <div id="drop">Drop to attach</div>
@@ -260,6 +285,43 @@ async function loadChats() {
   chats = await api('/api/chats');
   renderChats();
   updateTitle();
+  const c = current && chats.find(x => x.jid === current.jid);
+  if (c) { current = c; applyComposer(c); }
+}
+
+// Admin-only groups: no message box for people who can't post, as on the phone.
+function applyComposer(c) {
+  const readOnly = !!(c.announce && !c.admin);
+  $('#composer').hidden = readOnly;
+  $('#readonly').classList.toggle('on', readOnly);
+}
+
+// Typing: show when the other side types, and tell them when the user does.
+let typingTimer = 0, typingOn = false, typingSent = 0, typingIdle = 0;
+function showTyping(ev) {
+  if (ev.chat !== current?.jid) return;
+  const sub = $('#head .sub');
+  clearTimeout(typingTimer);
+  if (!ev.on) { sub.textContent = ''; return; }
+  sub.textContent = (ev.name ? ev.name + ' is ' : '') + (ev.audio ? 'recording audio…' : 'typing…');
+  typingTimer = setTimeout(() => { sub.textContent = ''; }, 25000);
+}
+function typed() {
+  if (!current || !input.value.trim()) return;
+  const chat = current.jid;
+  // WhatsApp drops "typing" after about 25 s, so a long message re-sends it.
+  if (!typingOn || Date.now() - typingSent > 10000) {
+    typingOn = true; typingSent = Date.now();
+    post('/api/typing', { chat, on: true }).catch(() => {});
+  }
+  clearTimeout(typingIdle);
+  typingIdle = setTimeout(() => stopTyping(chat), 5000);
+}
+function stopTyping(chat) {
+  clearTimeout(typingIdle);
+  if (!typingOn || !chat) return;
+  typingOn = false;
+  post('/api/typing', { chat, on: false }).catch(() => {});
 }
 let chatsTimer = 0;
 const refreshChats = () => { clearTimeout(chatsTimer); chatsTimer = setTimeout(loadChats, 250); };
@@ -382,9 +444,11 @@ $('#tabs').addEventListener('click', e => {
 const drafts = new Map();
 async function openChat(jid, name) {
   const c = chats.find(x => x.jid === jid) || { jid, name: name || jid };
-  if (current) drafts.set(current.jid, input.value);
+  if (current) { drafts.set(current.jid, input.value); stopTyping(current.jid); }
   input.value = drafts.get(jid) || ''; grow();
-  current = c; msgs = []; byId = new Map(); done = false; reply = null; renderReply(); pending = []; renderTray();
+  current = c;
+  applyComposer(c);
+  clearTimeout(typingTimer); $('#head .sub').textContent = ''; msgs = []; byId = new Map(); done = false; reply = null; renderReply(); pending = []; renderTray();
   $('#empty').hidden = true; $('#head').hidden = false; $('#msgs').hidden = false; $('#compose').hidden = false;
   $('#head .av').style.background = colorFor(c.jid); $('#head .av').innerHTML = avatarHTML(c);
   $('#head .title').textContent = c.name;
@@ -476,7 +540,7 @@ function sizeStyle(m, maxW = 330, maxH = 360) {
 function bodyHTML(m) {
   if (m.deleted) return `<div class="del">This message was deleted</div>`;
   let h = '';
-  if (m.quote_id) h += `<div class="q" data-q="${esc(m.quote_id)}">${esc(m.quote_text || 'Message')}</div>`;
+  if (m.quote_id) h += `<div class="q" data-q="${esc(m.quote_id)}">${m.quote_name ? `<span class="qn">${esc(m.quote_name)}</span>` : ''}${esc(m.quote_text || 'Message')}</div>`;
   const bg = m.thumb ? `background-image:url(${thumbURL(m)});` : '';
   switch (m.kind) {
     case 'image': h += `<img class="media" loading="lazy" src="${mediaURL(m)}" style="${bg}${sizeStyle(m)}" data-full="1"${m.w && m.h ? '' : ' data-nosize="1"'} alt="">`; break;
@@ -484,7 +548,7 @@ function bodyHTML(m) {
     case 'video': h += `<video class="media" src="${mediaURL(m)}" style="${sizeStyle(m)}" controls preload="none" poster="${thumbURL(m)}"></video>`; break;
     case 'voice': case 'audio': h += `<audio controls preload="none" src="${mediaURL(m)}"></audio>`; break;
     case 'sticker': h += `<img class="sticker" loading="lazy" src="${mediaURL(m)}" alt="">`; break;
-    case 'document': h += `<div class="doc" data-open="1"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><span>${esc(m.file_name || 'Document')}</span></div>`; break;
+    case 'document': h += `<div class="doc" data-open="1"><span class="ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><span>${esc(m.file_name || 'Document')}</span></div><button class="reveal" data-reveal="1">Show in folder</button>`; break;
     case 'location': {
       const [ll, ...rest] = m.text.split(' ');
       h += `<a href="https://www.google.com/maps?q=${esc(ll)}">Location: ${esc(rest.join(' ') || 'open map')}</a>`;
@@ -493,8 +557,10 @@ function bodyHTML(m) {
     case 'contact': h += `<div>Contact: ${esc(m.text)}</div>`; return h + metaHTML(m);
     case 'unsupported': h += `<div class="del">${esc(m.text)}</div>`; return h + metaHTML(m);
     case 'poll': {
-      const [q, ...opts] = m.text.split('\n');
-      h += `<div><b>Poll: ${esc(q)}</b></div><div class="txt">${esc(opts.join('\n'))}</div>`;
+      const [q, ...rest] = m.text.split('\n');
+      const opts = m.poll || rest.map(o => ({ name: o.replace(/^• /, ''), count: 0 }));
+      const total = Math.max(1, opts.reduce((n, o) => n + o.count, 0));
+      h += `<div class="poll"><b>Poll: ${esc(q)}</b>${opts.map(o => `<button class="opt${o.mine ? ' mine' : ''}" data-vote="${esc(o.name)}"><i class="bar" style="width:${Math.round(o.count / total * 100)}%"></i><span class="n">${o.count || ''}</span><span>${esc(o.name)}</span></button>`).join('')}</div>`;
       return h + metaHTML(m);
     }
   }
@@ -566,7 +632,7 @@ function upsertMsg(m) {
   }
   byId.set(m.id, m);
   msgs.push(m);
-  msgs.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1));
+  msgs.sort((a, b) => a.ts - b.ts || a.seq - b.seq);
   // A new message at the end is appended; redrawing everything would stop playback and drop selections.
   if (msgs[msgs.length - 1] === m && box.lastElementChild) {
     const prev = msgs[msgs.length - 2];
@@ -604,6 +670,14 @@ $('#msgs').addEventListener('click', e => {
   const mt = t.closest('.mention');
   if (mt && m?.mentions?.[mt.dataset.u]) { showPerson(m.mentions[mt.dataset.u], mt); return; }
   if (t.dataset.full) { $('#lightbox img').src = t.src; $('#lightbox').classList.add('on'); return; }
+  if (t.closest('[data-reveal]') && m) { post('/api/reveal', { chat: m.chat, id: m.id }).catch(err => alert("Couldn't show it: " + err.message)); return; }
+  const v = t.closest('[data-vote]');
+  if (v && m) {
+    // One choice per poll here; choosing your current answer again takes the vote back.
+    const options = m.poll?.find(o => o.mine)?.name === v.dataset.vote ? [] : [v.dataset.vote];
+    post('/api/vote', { chat: m.chat, id: m.id, options }).catch(err => alert('Vote not sent: ' + err.message));
+    return;
+  }
   if (t.closest('[data-open]') && m) { post('/api/open', { chat: m.chat, id: m.id }).catch(err => alert('Could not open: ' + err.message)); return; }
   const q = t.closest('[data-q]');
   if (q) { const el = $('#msgs').querySelector(`.row[data-id="${CSS.escape(q.dataset.q)}"]`); if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
@@ -713,7 +787,7 @@ async function applyDraft(d) {
 
 const input = $('#input');
 const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; };
-input.addEventListener('input', grow);
+input.addEventListener('input', () => { grow(); typed(); });
 input.addEventListener('keydown', e => {
   if (mentionKey(e)) return;
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
@@ -811,6 +885,7 @@ function attach(files) {
 }
 
 async function send() {
+  stopTyping(current?.jid);
   if (pending.length) {
     const files = pending;
     pending = []; renderTray();
@@ -824,6 +899,26 @@ async function send() {
   catch (err) { input.value = text; grow(); alert('Not sent: ' + err.message); }
 }
 
+// The size, length and first frame of a video, which the receiving phone shows before it downloads.
+function videoMeta(file) {
+  return new Promise(resolve => {
+    const v = document.createElement('video'), url = URL.createObjectURL(file);
+    const done = meta => { URL.revokeObjectURL(url); resolve(meta); };
+    const timer = setTimeout(() => done({}), 5000);
+    v.muted = true; v.preload = 'auto'; v.src = url;
+    v.onloadeddata = () => { v.currentTime = Math.min(0.1, v.duration / 2 || 0); };
+    v.onseeked = () => {
+      clearTimeout(timer);
+      const s = Math.min(1, 100 / Math.max(v.videoWidth, v.videoHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(v.videoWidth * s)); c.height = Math.max(1, Math.round(v.videoHeight * s));
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      done({ w: v.videoWidth, h: v.videoHeight, seconds: Math.round(v.duration || 0), thumb: c.toDataURL('image/jpeg', 0.7).split(',')[1] });
+    };
+    v.onerror = () => { clearTimeout(timer); done({}); };
+  });
+}
+
 async function sendFiles(files) {
   if (!current) return;
   const chat = current.jid; // the user may switch chats while files upload
@@ -833,6 +928,7 @@ async function sendFiles(files) {
     const fd = new FormData();
     fd.append('chat', chat); fd.append('file', f, f.name || 'image.png');
     if (i === 0) { fd.append('caption', caption); fd.append('quote', quote); }
+    if (f.type === 'video/mp4') for (const [k, val] of Object.entries(await videoMeta(f))) fd.append(k, val);
     try { await api('/api/upload', { method: 'POST', body: fd }); }
     catch (err) { alert(`Not sent (${f.name}): ${err.message}`); }
   }
@@ -848,6 +944,44 @@ document.addEventListener('dragenter', e => { e.preventDefault(); if (current) {
 document.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#drop').classList.remove('on'); } });
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#drop').classList.remove('on'); attach([...e.dataTransfer.files]); });
+
+// ---- new chat: pick someone from the address book, or type a number
+const nc = document.createElement('div');
+nc.id = 'newchat';
+nc.innerHTML = '<div class="panel"><input placeholder="Name, or number with country code" autocomplete="off"><div class="list"></div></div>';
+document.body.appendChild(nc);
+const ncInput = nc.querySelector('input');
+let contacts = null;
+async function openNewChat() {
+  nc.classList.add('on'); ncInput.value = ''; ncInput.focus();
+  renderNewChat();
+  if (!contacts) { contacts = await api('/api/contacts').catch(() => []); renderNewChat(); }
+}
+function renderNewChat() {
+  const q = ncInput.value.trim().toLowerCase(), digits = q.replace(/\D/g, '');
+  const hit = c => !q || c.name.toLowerCase().includes(q) || (digits.length > 2 && c.jid.startsWith(digits));
+  const seen = new Set(), people = [];
+  for (const c of chats) if (!c.group && c.jid.endsWith('@s.whatsapp.net') && hit(c)) { seen.add(c.jid); people.push(c); }
+  for (const c of contacts || []) if (!seen.has(c.jid) && hit(c)) people.push(c);
+  let h = digits.length >= 6 && /^[+\d\s().-]+$/.test(q) ? `<button class="item" data-phone="${digits}">Message +${digits}</button>` : '';
+  h += people.slice(0, 80).map(c => `<button class="item" data-jid="${esc(c.jid)}" data-name="${esc(c.name)}">${esc(c.name)}<small>+${esc(c.jid.split('@')[0])}</small></button>`).join('');
+  nc.querySelector('.list').innerHTML = h || `<div class="note">${contacts ? 'No one found' : 'Loading contacts…'}</div>`;
+}
+ncInput.addEventListener('input', renderNewChat);
+ncInput.addEventListener('keydown', e => { if (e.key === 'Enter') nc.querySelector('.item')?.click(); if (e.key === 'Escape') nc.classList.remove('on'); });
+nc.addEventListener('mousedown', e => { if (e.target === nc) nc.classList.remove('on'); });
+nc.addEventListener('click', async e => {
+  const b = e.target.closest('.item');
+  if (!b) return;
+  if (b.dataset.phone) {
+    try { const r = await post('/api/lookup', { phone: b.dataset.phone }); nc.classList.remove('on'); openChat(r.jid, '+' + b.dataset.phone); }
+    catch (err) { nc.querySelector('.list').innerHTML = `<div class="note">${esc(err.message)}</div>`; }
+    return;
+  }
+  nc.classList.remove('on');
+  openChat(b.dataset.jid, b.dataset.name);
+});
+$('#newchat-btn').onclick = openNewChat;
 
 // ---- connection state
 // An agent asked to send a message: nothing goes out until the user presses Send here.
@@ -929,6 +1063,8 @@ function connectEvents() {
     const ev = JSON.parse(e.data);
     if (ev.t === 'state') showState(ev);
     else if (ev.t === 'chats') refreshChats();
+    else if (ev.t === 'typing') showTyping(ev);
+    else if (ev.t === 'expired' && current && ev.chats.includes(current.jid)) openChat(current.jid);
     else if (ev.t === 'history' && ev.chat === current?.jid) gotHistory();
     else if (ev.t === 'draft') applyDraft(ev);
     else if (ev.t === 'open') openChat(ev.chat);
@@ -936,6 +1072,7 @@ function connectEvents() {
     else if (ev.t === 'approval_done') document.querySelector(`.appr[data-id="${CSS.escape(ev.id)}"]`)?.remove();
     else if (ev.t === 'msg' && ev.chat === current?.jid) {
       upsertMsg(ev.msg);
+      if (!ev.msg.from_me) { clearTimeout(typingTimer); $('#head .sub').textContent = ''; }
       if (!ev.msg.from_me && focused) markRead();
     }
   };

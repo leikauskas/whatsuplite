@@ -202,5 +202,12 @@ func (a *App) outgoing(chat types.JID, text, quoteID string) (string, *waE2E.Con
 		}
 		ci.MentionedJID = mentioned
 	}
+	// In a chat with disappearing messages on, what we send must disappear too.
+	if exp := a.db.ChatInt(a.toPN(chat).String(), "ephemeral"); exp > 0 {
+		if ci == nil {
+			ci = &waE2E.ContextInfo{}
+		}
+		ci.Expiration = proto.Uint32(uint32(exp))
+	}
 	return text, ci
 }

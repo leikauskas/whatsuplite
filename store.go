@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -55,6 +56,19 @@ CREATE TABLE IF NOT EXISTS reactions (
 	PRIMARY KEY (chat, msg_id, sender)
 );
 CREATE TABLE IF NOT EXISTS names (jid TEXT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS readers (
+	chat TEXT NOT NULL,
+	id TEXT NOT NULL,
+	reader TEXT NOT NULL,
+	PRIMARY KEY (chat, id, reader)
+);
+CREATE TABLE IF NOT EXISTS votes (
+	chat TEXT NOT NULL,
+	poll_id TEXT NOT NULL,
+	voter TEXT NOT NULL,
+	options TEXT NOT NULL, -- hex SHA-256 of each chosen option name, comma separated
+	PRIMARY KEY (chat, poll_id, voter)
+);
 `
 
 func openDB(path string) (*DB, error) {
@@ -70,13 +84,19 @@ func openDB(path string) (*DB, error) {
 	// Added after the first release; ALTER fails harmlessly when the column already exists.
 	for _, col := range []string{
 		`parent TEXT NOT NULL DEFAULT ''`, `is_parent INTEGER NOT NULL DEFAULT 0`, `default_sub INTEGER NOT NULL DEFAULT 0`,
+		`members INTEGER NOT NULL DEFAULT 0`, `announce INTEGER NOT NULL DEFAULT 0`, `admin INTEGER NOT NULL DEFAULT 0`,
+		`ephemeral INTEGER NOT NULL DEFAULT 0`,
 	} {
 		db.Exec(`ALTER TABLE chats ADD COLUMN ` + col)
+	}
+	for _, col := range []string{`quote_sender TEXT NOT NULL DEFAULT ''`, `expires_at INTEGER NOT NULL DEFAULT 0`} {
+		db.Exec(`ALTER TABLE messages ADD COLUMN ` + col)
 	}
 	return &DB{DB: db}, nil
 }
 
 type Msg struct {
+	Seq        int64              `json:"seq"` // arrival order, to sort messages sent in the same second
 	Chat       string             `json:"chat"`
 	ID         string             `json:"id"`
 	Sender     string             `json:"sender"`
@@ -93,11 +113,21 @@ type Msg struct {
 	Raw        []byte             `json:"-"`
 	QuoteID    string             `json:"quote_id,omitempty"`
 	QuoteText  string             `json:"quote_text,omitempty"`
+	QuoteFrom  string             `json:"-"`
+	QuoteName  string             `json:"quote_name,omitempty"`
+	ExpiresAt  int64              `json:"-"`
+	Poll       []PollOption       `json:"poll,omitempty"`
 	Mentions   map[string]mention `json:"mentions,omitempty"` // keyed by the number in "@<number>"
 	Status     int                `json:"status"`
 	Edited     bool               `json:"edited,omitempty"`
 	Deleted    bool               `json:"deleted,omitempty"`
 	Reactions  []Reaction         `json:"reactions,omitempty"`
+}
+
+type PollOption struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+	Mine  bool   `json:"mine,omitempty"`
 }
 
 type Reaction struct {
@@ -119,23 +149,28 @@ type Chat struct {
 	Parent     string `json:"parent,omitempty"`      // community this group belongs to
 	IsParent   bool   `json:"is_parent,omitempty"`   // this chat is a community
 	DefaultSub bool   `json:"default_sub,omitempty"` // the community's announcements group
+	Announce   bool   `json:"announce,omitempty"`    // only admins can send
+	Admin      bool   `json:"admin,omitempty"`       // the user is an admin here
 }
 
-const msgCols = `chat,id,sender,from_me,ts,kind,text,file_name,mime,w,h,thumb,raw,quote_id,quote_text,status,edited,deleted`
+const msgCols = `chat,id,sender,from_me,ts,kind,text,file_name,mime,w,h,thumb,raw,quote_id,quote_text,status,edited,deleted,quote_sender,expires_at`
+
+// selCols is what scanMsg reads: the stored columns plus rowid, the arrival order.
+const selCols = `rowid,` + msgCols
 
 func scanMsg(row interface{ Scan(...any) error }) (*Msg, error) {
 	m := &Msg{}
-	err := row.Scan(&m.Chat, &m.ID, &m.Sender, &m.FromMe, &m.TS, &m.Kind, &m.Text, &m.FileName, &m.Mime,
-		&m.W, &m.H, &m.Thumb, &m.Raw, &m.QuoteID, &m.QuoteText, &m.Status, &m.Edited, &m.Deleted)
+	err := row.Scan(&m.Seq, &m.Chat, &m.ID, &m.Sender, &m.FromMe, &m.TS, &m.Kind, &m.Text, &m.FileName, &m.Mime,
+		&m.W, &m.H, &m.Thumb, &m.Raw, &m.QuoteID, &m.QuoteText, &m.Status, &m.Edited, &m.Deleted, &m.QuoteFrom, &m.ExpiresAt)
 	return m, err
 }
 
 func (d *DB) InsertMsg(m *Msg) (bool, error) {
 	d.wmu.Lock()
 	defer d.wmu.Unlock()
-	res, err := d.Exec(`INSERT OR IGNORE INTO messages (`+msgCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	res, err := d.Exec(`INSERT OR IGNORE INTO messages (`+msgCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.Chat, m.ID, m.Sender, m.FromMe, m.TS, m.Kind, m.Text, m.FileName, m.Mime, m.W, m.H,
-		m.Thumb, m.Raw, m.QuoteID, m.QuoteText, m.Status, m.Edited, m.Deleted)
+		m.Thumb, m.Raw, m.QuoteID, m.QuoteText, m.Status, m.Edited, m.Deleted, m.QuoteFrom, m.ExpiresAt)
 	if err != nil {
 		return false, err
 	}
@@ -144,13 +179,18 @@ func (d *DB) InsertMsg(m *Msg) (bool, error) {
 }
 
 func (d *DB) GetMsg(chat, id string) (*Msg, error) {
-	return scanMsg(d.QueryRow(`SELECT `+msgCols+` FROM messages WHERE chat=? AND id=?`, chat, id))
+	return scanMsg(d.QueryRow(`SELECT `+selCols+` FROM messages WHERE chat=? AND id=?`, chat, id))
 }
 
 // Messages returns up to limit messages older than the (beforeTS, beforeID) cursor, oldest first.
 func (d *DB) Messages(chat string, beforeTS int64, beforeID string, limit int) ([]*Msg, error) {
-	rows, err := d.Query(`SELECT `+msgCols+` FROM messages WHERE chat=? AND (ts, id) < (?, ?)
-		ORDER BY ts DESC, id DESC LIMIT ?`, chat, beforeTS, beforeID, limit)
+	// Within one second, rowid keeps the order messages arrived in; message IDs are random.
+	beforeSeq := int64(math.MaxInt64)
+	if beforeID != "" {
+		d.QueryRow(`SELECT rowid FROM messages WHERE chat=? AND id=?`, chat, beforeID).Scan(&beforeSeq)
+	}
+	rows, err := d.Query(`SELECT `+selCols+` FROM messages WHERE chat=? AND (ts, rowid) < (?, ?)
+		ORDER BY ts DESC, rowid DESC LIMIT ?`, chat, beforeTS, beforeSeq, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +270,105 @@ func (d *DB) MarkDeleted(chat, id string) error {
 	return err
 }
 
+// RefreshPreview redoes a chat's preview from its newest message, after that message was edited or deleted.
+func (d *DB) RefreshPreview(chat string) error {
+	m, err := scanMsg(d.QueryRow(`SELECT `+selCols+` FROM messages WHERE chat=? AND kind != 'system'
+		ORDER BY ts DESC, rowid DESC LIMIT 1`, chat))
+	if err != nil {
+		return err
+	}
+	text := preview(m)
+	if m.Deleted {
+		text = "This message was deleted"
+	}
+	d.wmu.Lock()
+	defer d.wmu.Unlock()
+	_, err = d.Exec(`UPDATE chats SET last_text=? WHERE jid=?`, text, chat)
+	return err
+}
+
+// AddReader records that someone read a message in a group and returns how many have read it.
+func (d *DB) AddReader(chat, id, reader string) int {
+	d.wmu.Lock()
+	d.Exec(`INSERT OR IGNORE INTO readers (chat,id,reader) VALUES (?,?,?)`, chat, id, reader)
+	d.wmu.Unlock()
+	n := 0
+	d.QueryRow(`SELECT count(*) FROM readers WHERE chat=? AND id=?`, chat, id).Scan(&n)
+	return n
+}
+
+func (d *DB) ChatInt(jid, field string) (v int64) {
+	switch field {
+	case "members", "ephemeral", "announce", "admin":
+	default:
+		panic("unknown chat field " + field)
+	}
+	d.QueryRow(`SELECT `+field+` FROM chats WHERE jid=?`, jid).Scan(&v)
+	return
+}
+
+func (d *DB) SetGroupState(jid string, members int, announce, admin bool, ephemeral uint32) error {
+	d.wmu.Lock()
+	defer d.wmu.Unlock()
+	_, err := d.Exec(`INSERT INTO chats (jid,members,announce,admin,ephemeral) VALUES (?,?,?,?,?)
+		ON CONFLICT(jid) DO UPDATE SET members=excluded.members, announce=excluded.announce,
+			admin=excluded.admin, ephemeral=excluded.ephemeral`, jid, members, announce, admin, ephemeral)
+	return err
+}
+
+func (d *DB) SetVote(chat, pollID, voter string, options []string) error {
+	d.wmu.Lock()
+	defer d.wmu.Unlock()
+	if len(options) == 0 {
+		_, err := d.Exec(`DELETE FROM votes WHERE chat=? AND poll_id=? AND voter=?`, chat, pollID, voter)
+		return err
+	}
+	_, err := d.Exec(`INSERT INTO votes (chat,poll_id,voter,options) VALUES (?,?,?,?)
+		ON CONFLICT(chat,poll_id,voter) DO UPDATE SET options=excluded.options`, chat, pollID, voter, strings.Join(options, ","))
+	return err
+}
+
+// Votes maps each voter in a poll to the hashes of the options they chose.
+func (d *DB) Votes(chat, pollID string) map[string][]string {
+	rows, err := d.Query(`SELECT voter, options FROM votes WHERE chat=? AND poll_id=?`, chat, pollID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var voter, opts string
+		if rows.Scan(&voter, &opts) == nil {
+			out[voter] = strings.Split(opts, ",")
+		}
+	}
+	return out
+}
+
+// DeleteExpired removes disappearing messages whose time is up and returns the chats they were in.
+func (d *DB) DeleteExpired(now int64) []string {
+	rows, err := d.Query(`SELECT DISTINCT chat FROM messages WHERE expires_at > 0 AND expires_at < ?`, now)
+	if err != nil {
+		return nil
+	}
+	var chats []string
+	for rows.Next() {
+		var c string
+		if rows.Scan(&c) == nil {
+			chats = append(chats, c)
+		}
+	}
+	rows.Close()
+	if len(chats) == 0 {
+		return nil
+	}
+	d.wmu.Lock()
+	defer d.wmu.Unlock()
+	d.Exec(`DELETE FROM reactions WHERE (chat, msg_id) IN (SELECT chat, id FROM messages WHERE expires_at > 0 AND expires_at < ?)`, now)
+	d.Exec(`DELETE FROM messages WHERE expires_at > 0 AND expires_at < ?`, now)
+	return chats
+}
+
 func (d *DB) SetRaw(chat, id string, raw []byte) error {
 	d.wmu.Lock()
 	defer d.wmu.Unlock()
@@ -292,7 +431,7 @@ func (d *DB) SetChatMeta(jid, name string, mutedUntil int64, archived bool, pinn
 
 func (d *DB) SetChatField(jid, field string, value any) error {
 	switch field {
-	case "name", "muted_until", "archived", "pinned", "unread":
+	case "name", "muted_until", "archived", "pinned", "unread", "ephemeral", "announce", "admin", "members":
 	default:
 		panic("unknown chat field " + field)
 	}
@@ -346,7 +485,7 @@ func (d *DB) ChatUnread(jid string) (unread int, mutedUntil int64) {
 
 func (d *DB) Chats() ([]*Chat, error) {
 	// Community groups are kept even without messages so the Communities view can list them.
-	rows, err := d.Query(`SELECT jid,name,last_ts,last_text,unread,muted_until,archived,pinned,parent,is_parent,default_sub
+	rows, err := d.Query(`SELECT jid,name,last_ts,last_text,unread,muted_until,archived,pinned,parent,is_parent,default_sub,announce,admin
 		FROM chats WHERE last_ts > 0 OR is_parent = 1 OR parent != '' ORDER BY last_ts DESC`)
 	if err != nil {
 		return nil, err
@@ -356,7 +495,7 @@ func (d *DB) Chats() ([]*Chat, error) {
 	for rows.Next() {
 		c := &Chat{}
 		if err := rows.Scan(&c.JID, &c.Name, &c.LastTS, &c.LastText, &c.Unread, &c.MutedUntil, &c.Archived, &c.Pinned,
-			&c.Parent, &c.IsParent, &c.DefaultSub); err != nil {
+			&c.Parent, &c.IsParent, &c.DefaultSub, &c.Announce, &c.Admin); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

@@ -14,7 +14,7 @@ import (
 
 func (d *DB) Search(q, chat string, limit int) ([]*Msg, error) {
 	like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q) + "%"
-	query := `SELECT ` + msgCols + ` FROM messages WHERE deleted=0 AND kind != 'system' AND (text LIKE ? ESCAPE '\' OR file_name LIKE ? ESCAPE '\')`
+	query := `SELECT ` + selCols + ` FROM messages WHERE deleted=0 AND kind != 'system' AND (text LIKE ? ESCAPE '\' OR file_name LIKE ? ESCAPE '\')`
 	args := []any{like, like}
 	if chat != "" {
 		query += ` AND chat=?`

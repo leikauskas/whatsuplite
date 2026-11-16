@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
-	_ "image/jpeg"
+	"image/color"
+	"image/jpeg"
 	_ "image/png"
 	"io"
 	"mime"
@@ -97,6 +99,11 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/decide", a.apiDecide)
 	mux.HandleFunc("GET /api/proposal-file", a.apiProposalFile)
 	mux.HandleFunc("GET /api/media-file", a.apiMediaFile)
+	mux.HandleFunc("POST /api/typing", a.apiTyping)
+	mux.HandleFunc("POST /api/vote", a.apiVote)
+	mux.HandleFunc("GET /api/contacts", a.apiContacts)
+	mux.HandleFunc("POST /api/lookup", a.apiLookup)
+	mux.HandleFunc("POST /api/reveal", a.apiReveal)
 	return a.guard(mux)
 }
 
@@ -507,7 +514,13 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 413, errors.New("files over 100 MB can't be sent"))
 		return
 	}
-	rec, err := a.sendMedia(chat, data, hdr.Filename, r.FormValue("caption"), r.FormValue("quote"))
+	// The window works out a video's size, length and first frame, which Go can't decode on its own.
+	var meta mediaMeta
+	meta.Thumb, _ = base64.StdEncoding.DecodeString(r.FormValue("thumb"))
+	fmt.Sscan(r.FormValue("w"), &meta.W)
+	fmt.Sscan(r.FormValue("h"), &meta.H)
+	fmt.Sscan(r.FormValue("seconds"), &meta.Seconds)
+	rec, err := a.sendMedia(chat, data, hdr.Filename, r.FormValue("caption"), r.FormValue("quote"), meta)
 	if err != nil {
 		fail(w, 502, err)
 		return
@@ -528,7 +541,12 @@ func fileMime(name string, data []byte) string {
 }
 
 // sendMedia uploads a file as a photo, video or document, by its type, and sends it.
-func (a *App) sendMedia(chat types.JID, data []byte, name, caption, quote string) (*Msg, error) {
+type mediaMeta struct {
+	Thumb         []byte
+	W, H, Seconds uint32
+}
+
+func (a *App) sendMedia(chat types.JID, data []byte, name, caption, quote string, meta mediaMeta) (*Msg, error) {
 	mt := fileMime(name, data)
 	caption, ci := a.outgoing(chat, caption, quote)
 	kind := whatsmeow.MediaDocument
@@ -554,12 +572,23 @@ func (a *App) sendMedia(chat types.JID, data []byte, name, caption, quote string
 		if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
 			msg.ImageMessage.Width, msg.ImageMessage.Height = proto.Uint32(uint32(cfg.Width)), proto.Uint32(uint32(cfg.Height))
 		}
+		// The small preview shows while the photo downloads, and in replies and notifications.
+		msg.ImageMessage.JPEGThumbnail = jpegThumb(data)
 	case whatsmeow.MediaVideo:
 		msg = &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
 			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 			Mimetype: proto.String(mt), Caption: proto.String(caption), ContextInfo: ci,
 		}}
+		if meta.W > 0 && meta.H > 0 {
+			msg.VideoMessage.Width, msg.VideoMessage.Height = proto.Uint32(meta.W), proto.Uint32(meta.H)
+		}
+		if meta.Seconds > 0 {
+			msg.VideoMessage.Seconds = proto.Uint32(meta.Seconds)
+		}
+		if len(meta.Thumb) > 0 {
+			msg.VideoMessage.JPEGThumbnail = meta.Thumb
+		}
 	default:
 		if mt == "" {
 			mt = "application/octet-stream"
@@ -657,9 +686,190 @@ func (a *App) apiView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mu.Lock()
+	changed := a.focused != req.Focused
 	a.openChat, a.focused = req.Chat, req.Focused
 	a.mu.Unlock()
+	if changed {
+		go a.setAvailable(req.Focused)
+	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (a *App) apiTyping(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Chat string `json:"chat"`
+		On   bool   `json:"on"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		fail(w, 400, err)
+		return
+	}
+	jid, err := types.ParseJID(req.Chat)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	state := types.ChatPresencePaused
+	if req.On {
+		state = types.ChatPresenceComposing
+	}
+	a.cli.SendChatPresence(a.ctx, jid, state, types.ChatPresenceMediaText)
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (a *App) apiVote(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Chat    string   `json:"chat"`
+		ID      string   `json:"id"`
+		Options []string `json:"options"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		fail(w, 400, err)
+		return
+	}
+	m, err := a.db.GetMsg(req.Chat, req.ID)
+	if err != nil || m.Kind != "poll" {
+		fail(w, 404, errors.New("poll not found"))
+		return
+	}
+	chat, _ := types.ParseJID(m.Chat)
+	sender, _ := types.ParseJID(m.Sender)
+	info := &types.MessageInfo{ID: m.ID, MessageSource: types.MessageSource{
+		Chat: chat, Sender: sender, IsFromMe: m.FromMe, IsGroup: chat.Server == types.GroupServer,
+	}}
+	msg, err := a.cli.BuildPollVote(a.ctx, info, req.Options)
+	if err != nil {
+		fail(w, 502, err)
+		return
+	}
+	if _, err := a.cli.SendMessage(a.ctx, chat, msg); err != nil {
+		fail(w, 502, err)
+		return
+	}
+	a.db.SetVote(m.Chat, m.ID, selfMarker, hexes(whatsmeow.HashPollOptions(req.Options)))
+	a.pushMsg(m.Chat, m.ID)
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// apiContacts lists the address book for starting a new chat.
+func (a *App) apiContacts(w http.ResponseWriter, r *http.Request) {
+	all, err := a.cli.Store.Contacts.GetAllContacts(a.ctx)
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	type entry struct {
+		JID  string `json:"jid"`
+		Name string `json:"name"`
+	}
+	list := []entry{}
+	for jid, c := range all {
+		jid = a.toPN(jid)
+		if jid.Server != types.DefaultUserServer {
+			continue
+		}
+		name := c.FullName
+		for _, n := range []string{c.FirstName, c.BusinessName, c.PushName} {
+			if name == "" {
+				name = n
+			}
+		}
+		if name != "" {
+			list = append(list, entry{jid.String(), name})
+		}
+	}
+	sort.Slice(list, func(i, j int) bool { return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name) })
+	writeJSON(w, list)
+}
+
+// apiLookup checks that a phone number has WhatsApp and returns its chat.
+func (a *App) apiLookup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Phone string `json:"phone"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		fail(w, 400, err)
+		return
+	}
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, req.Phone)
+	if len(digits) < 6 {
+		fail(w, 400, errors.New("type the number with its country code"))
+		return
+	}
+	res, err := a.cli.IsOnWhatsApp(a.ctx, []string{"+" + digits})
+	if err != nil {
+		fail(w, 502, err)
+		return
+	}
+	if len(res) == 0 || !res[0].IsIn {
+		fail(w, 404, errors.New("this number isn't on WhatsApp"))
+		return
+	}
+	writeJSON(w, map[string]string{"jid": res[0].JID.ToNonAD().String()})
+}
+
+// apiReveal shows a downloaded file in Explorer, so it can be copied or saved somewhere else.
+func (a *App) apiReveal(w http.ResponseWriter, r *http.Request) {
+	var req sendReq
+	if err := readJSON(r, &req); err != nil {
+		fail(w, 400, err)
+		return
+	}
+	m, err := a.db.GetMsg(req.Chat, req.ID)
+	if err != nil {
+		fail(w, 404, err)
+		return
+	}
+	path, err := a.mediaFile(m)
+	if err != nil {
+		fail(w, 410, err)
+		return
+	}
+	if err := exec.Command("explorer.exe", "/select,", path).Start(); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// jpegThumb makes the small preview WhatsApp sends with a photo, at most 100 px on its long side.
+func jpegThumb(data []byte) []byte {
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	b := src.Bounds()
+	scale := 100.0 / float64(max(b.Dx(), b.Dy()))
+	if scale > 1 {
+		scale = 1
+	}
+	w, h := max(1, int(float64(b.Dx())*scale)), max(1, int(float64(b.Dy())*scale))
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	// Average each block of source pixels; plain sampling makes thumbnails of screenshots noisy.
+	for y := 0; y < h; y++ {
+		y0, y1 := b.Min.Y+y*b.Dy()/h, b.Min.Y+(y+1)*b.Dy()/h
+		for x := 0; x < w; x++ {
+			x0, x1 := b.Min.X+x*b.Dx()/w, b.Min.X+(x+1)*b.Dx()/w
+			var r, g, bl, n uint64
+			for sy := y0; sy < max(y1, y0+1); sy += max(1, (y1-y0)/4) {
+				for sx := x0; sx < max(x1, x0+1); sx += max(1, (x1-x0)/4) {
+					cr, cg, cb, _ := src.At(sx, sy).RGBA()
+					r, g, bl, n = r+uint64(cr), g+uint64(cg), bl+uint64(cb), n+1
+				}
+			}
+			dst.Set(x, y, color.RGBA64{uint16(r / n), uint16(g / n), uint16(bl / n), 0xffff})
+		}
+	}
+	var out bytes.Buffer
+	if jpeg.Encode(&out, dst, &jpeg.Options{Quality: 70}) != nil {
+		return nil
+	}
+	return out.Bytes()
 }
 
 // Extensions that would run code when opened; we show these in Explorer instead of launching them.

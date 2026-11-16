@@ -224,7 +224,7 @@ func (a *App) apiDecide(w http.ResponseWriter, r *http.Request) {
 			err = errors.New("the file grew past the size limit")
 		}
 		if err == nil {
-			_, err = a.sendMedia(jid, data, p.FileName, text, p.Quote)
+			_, err = a.sendMedia(jid, data, p.FileName, text, p.Quote, mediaMeta{})
 		}
 	} else {
 		_, err = a.deliver(jid, a.textMessage(jid, text, p.Quote))

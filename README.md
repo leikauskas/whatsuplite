@@ -10,9 +10,9 @@ It's unofficial. It links to your account as a companion device, the same way Wh
 
 ## What it does
 
-Chats, groups and communities, with photos, videos, voice notes, documents, events, replies, reactions and read ticks. Your full history syncs when you link, and older messages come from your phone when you scroll up or open a chat with nothing stored yet. Search covers chat names and message text. Clicking a notification opens that chat. Closing the window keeps it running in the tray, and it starts with Windows.
+Chats, groups and communities, with photos, videos, voice notes, documents, polls, events, replies, reactions, read ticks, typing and disappearing messages. Your full history syncs when you link, and older messages come from your phone when you scroll up or open a chat with nothing stored yet. Search covers chat names and message text, and the + button starts a chat with anyone in your contacts or any number. Clicking a notification opens that chat. While the window is in front you show as online, as on WhatsApp Web, so your phone stays quiet until you switch away. Closing the window keeps it running in the tray, and it starts with Windows.
 
-There's no calling, no Status and no recording voice notes yet. You can't edit or delete your own messages either. Polls show the question and options, but votes only show on your phone, and message types it doesn't know yet appear as a note telling you to open them there.
+There's no calling, no Status and no recording voice notes yet. You can't edit or delete your own messages either. You can vote for one option in a poll, not several. Message types it doesn't know yet appear as a note telling you to open them on your phone.
 
 ## Claude
 
