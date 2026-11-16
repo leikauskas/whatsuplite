@@ -86,7 +86,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .b .meta .tick.read { color: var(--tick); }
 .b .del { font-style: italic; color: var(--muted); }
 .b .q { border-left: 3px solid var(--accent); background: var(--quote); border-radius: 5px; padding: 4px 8px; margin-bottom: 4px; font-size: 13px; color: var(--muted); max-height: 3.2em; overflow: hidden; cursor: pointer; }
-.b img.media, .b video.media { display: block; max-width: 100%; border-radius: 6px; margin: 2px 0 4px; background: var(--quote) center/cover no-repeat; cursor: pointer; }
+.b img.media, .b video.media { display: block; max-width: 100%; height: auto; object-fit: contain; border-radius: 6px; margin: 2px 0 4px; background: var(--quote) center/cover no-repeat; cursor: pointer; }
 .b img.sticker { width: 140px; height: 140px; object-fit: contain; display: block; }
 .b audio { display: block; width: 280px; max-width: 100%; margin: 2px 0; }
 .doc { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; background: var(--quote); cursor: pointer; margin: 2px 0 4px; }
@@ -147,6 +147,12 @@ a { color: var(--accent); }
 #compose { background: var(--panel); border-top: 1px solid var(--line); padding: 8px 12px; }
 #replybar { display: none; align-items: center; gap: 8px; padding: 4px 8px 8px; font-size: 13px; color: var(--muted); }
 #replybar.on { display: flex; }
+#tray { display: none; flex-wrap: wrap; gap: 8px; padding: 4px 8px 8px; }
+#tray.on { display: flex; }
+#tray .att { position: relative; height: 72px; min-width: 72px; max-width: 220px; display: flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); font-size: 12px; color: var(--muted); }
+#tray .att img { height: 100%; display: block; }
+#tray .att span { padding: 0 28px 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tray .att button { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; cursor: pointer; }
 #replybar .rq { flex: 1; border-left: 3px solid var(--accent); padding-left: 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #composer { display: flex; align-items: flex-end; gap: 8px; }
 #input { flex: 1; resize: none; max-height: 160px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; outline: none; }
@@ -188,6 +194,7 @@ a { color: var(--accent); }
     <div id="msgs" hidden></div>
     <footer id="compose" hidden>
       <div id="replybar"><div class="rq"></div><button id="replyx" title="Cancel">✕</button></div>
+      <div id="tray"></div>
       <div id="composer">
         <button class="iconbtn" id="attach" title="Attach"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7L14 4.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15.5 7.6"/></svg></button>
         <textarea id="input" rows="1" placeholder="Message"></textarea>
@@ -195,7 +202,7 @@ a { color: var(--accent); }
       </div>
       <input type="file" id="file" hidden multiple>
     </footer>
-    <div id="drop">Drop to send</div>
+    <div id="drop">Drop to attach</div>
   </main>
 </div>
 <div id="overlay"><div class="card" id="card"></div></div>
@@ -372,7 +379,7 @@ $('#tabs').addEventListener('click', e => {
 // ---- messages
 async function openChat(jid, name) {
   const c = chats.find(x => x.jid === jid) || { jid, name: name || jid };
-  current = c; msgs = []; byId = new Map(); done = false; reply = null; renderReply();
+  current = c; msgs = []; byId = new Map(); done = false; reply = null; renderReply(); pending = []; renderTray();
   $('#empty').hidden = true; $('#head').hidden = false; $('#msgs').hidden = false; $('#compose').hidden = false;
   $('#head .av').style.background = colorFor(c.jid); $('#head .av').innerHTML = avatarHTML(c);
   $('#head .title').textContent = c.name;
@@ -443,14 +450,22 @@ async function loadOlder() {
   box.scrollTop += box.scrollHeight - h;
 }
 $('#msgs').addEventListener('scroll', () => { if ($('#msgs').scrollTop < 300) loadOlder(); });
+// Images sent without a size get a 4:3 placeholder; once one loads, give it its real shape.
+$('#msgs').addEventListener('load', e => {
+  const el = e.target;
+  if (!el.matches?.('img[data-nosize]') || !el.naturalWidth) return;
+  const s = Math.min(1, 330 / el.naturalWidth, 360 / el.naturalHeight);
+  el.style.width = Math.round(el.naturalWidth * s) + 'px';
+  el.style.aspectRatio = `${el.naturalWidth}/${el.naturalHeight}`;
+}, true);
 
 const mediaURL = m => `/media?chat=${encodeURIComponent(m.chat)}&id=${encodeURIComponent(m.id)}&t=${T}`;
 const thumbURL = m => m.thumb ? `data:image/jpeg;base64,${m.thumb}` : '';
 
 function sizeStyle(m, maxW = 330, maxH = 360) {
-  if (!m.w || !m.h) return `width:${maxW}px;height:${Math.round(maxW * .75)}px`;
+  if (!m.w || !m.h) return `width:${maxW}px;aspect-ratio:4/3`;
   const s = Math.min(1, maxW / m.w, maxH / m.h);
-  return `width:${Math.round(m.w * s)}px;height:${Math.round(m.h * s)}px`;
+  return `width:${Math.round(m.w * s)}px;aspect-ratio:${m.w}/${m.h}`;
 }
 
 function bodyHTML(m) {
@@ -459,7 +474,7 @@ function bodyHTML(m) {
   if (m.quote_id) h += `<div class="q" data-q="${esc(m.quote_id)}">${esc(m.quote_text || 'Message')}</div>`;
   const bg = m.thumb ? `background-image:url(${thumbURL(m)});` : '';
   switch (m.kind) {
-    case 'image': h += `<img class="media" loading="lazy" src="${mediaURL(m)}" style="${bg}${sizeStyle(m)}" data-full="1" alt="">`; break;
+    case 'image': h += `<img class="media" loading="lazy" src="${mediaURL(m)}" style="${bg}${sizeStyle(m)}" data-full="1"${m.w && m.h ? '' : ' data-nosize="1"'} alt="">`; break;
     case 'gif': h += `<video class="media" src="${mediaURL(m)}" style="${sizeStyle(m)}" autoplay loop muted playsinline preload="none" poster="${thumbURL(m)}"></video>`; break;
     case 'video': h += `<video class="media" src="${mediaURL(m)}" style="${sizeStyle(m)}" controls preload="none" poster="${thumbURL(m)}"></video>`; break;
     case 'voice': case 'audio': h += `<audio controls preload="none" src="${mediaURL(m)}"></audio>`; break;
@@ -671,7 +686,10 @@ input.addEventListener('input', grow);
 input.addEventListener('keydown', e => {
   if (mentionKey(e)) return;
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-  if (e.key === 'Escape' && reply) { reply = null; renderReply(); }
+  if (e.key === 'Escape') {
+    if (reply) { reply = null; renderReply(); }
+    else if (pending.length) { pending = []; renderTray(); }
+  }
 });
 $('#send').onclick = send;
 
@@ -728,7 +746,45 @@ mbox.addEventListener('mousedown', e => {
   if (b) pickMention(+b.dataset.i);
 });
 
+// Pasted, dropped and picked files wait here with a preview; Send uploads them with the typed text as caption.
+let pending = [];
+function renderTray() {
+  const tray = $('#tray');
+  tray.querySelectorAll('img').forEach(i => URL.revokeObjectURL(i.src));
+  tray.innerHTML = '';
+  pending.forEach((f, i) => {
+    const d = document.createElement('div');
+    d.className = 'att';
+    if (f.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(f);
+      d.append(img);
+    } else {
+      const name = document.createElement('span');
+      name.textContent = f.name;
+      d.append(name);
+    }
+    const x = document.createElement('button');
+    x.textContent = '✕'; x.title = 'Remove';
+    x.onclick = () => { pending.splice(i, 1); renderTray(); input.focus(); };
+    d.append(x);
+    tray.append(d);
+  });
+  tray.classList.toggle('on', pending.length > 0);
+}
+function attach(files) {
+  if (!current || !files.length) return;
+  pending.push(...files);
+  renderTray();
+  input.focus();
+}
+
 async function send() {
+  if (pending.length) {
+    const files = pending;
+    pending = []; renderTray();
+    return sendFiles(files);
+  }
   const text = input.value;
   if (!current || !text.trim()) return;
   const quote = reply?.id || '';
@@ -750,16 +806,16 @@ async function sendFiles(files) {
   }
 }
 $('#attach').onclick = () => $('#file').click();
-$('#file').onchange = e => { sendFiles(e.target.files); e.target.value = ''; };
+$('#file').onchange = e => { attach([...e.target.files]); e.target.value = ''; };
 input.addEventListener('paste', e => {
   const files = [...e.clipboardData.items].filter(i => i.kind === 'file').map(i => i.getAsFile());
-  if (files.length) { e.preventDefault(); sendFiles(files); }
+  if (files.length) { e.preventDefault(); attach(files); }
 });
 let dragDepth = 0;
 document.addEventListener('dragenter', e => { e.preventDefault(); if (current) { dragDepth++; $('#drop').classList.add('on'); } });
 document.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#drop').classList.remove('on'); } });
 document.addEventListener('dragover', e => e.preventDefault());
-document.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#drop').classList.remove('on'); if (e.dataTransfer.files.length) sendFiles(e.dataTransfer.files); });
+document.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('#drop').classList.remove('on'); attach([...e.dataTransfer.files]); });
 
 // ---- connection state
 // An agent asked to send a message: nothing goes out until the user presses Send here.

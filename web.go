@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime"
 	"net/http"
@@ -456,6 +460,10 @@ func (a *App) sendMedia(chat types.JID, data []byte, name, caption, quote string
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: proto.Uint64(up.FileLength),
 			Mimetype: proto.String(mt), Caption: proto.String(caption), ContextInfo: ci,
 		}}
+		// Without a size the receiving app guesses the shape and stretches the picture.
+		if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+			msg.ImageMessage.Width, msg.ImageMessage.Height = proto.Uint32(uint32(cfg.Width)), proto.Uint32(uint32(cfg.Height))
+		}
 	case whatsmeow.MediaVideo:
 		msg = &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
 			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,

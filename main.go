@@ -151,7 +151,9 @@ func main() {
 	}
 	store.SetOSInfo(appID, [3]uint32{0, 1, 0})
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_DESKTOP.Enum()
-	store.DeviceProps.RequireFullSync = proto.Bool(false)
+	// Without a full sync the phone sends about one message per chat, leaving most chats empty. The phone
+	// only reads this when a device links, so an existing link has to be redone to get the history.
+	store.DeviceProps.RequireFullSync = proto.Bool(true)
 
 	newToken := func() string {
 		b := make([]byte, 24)
